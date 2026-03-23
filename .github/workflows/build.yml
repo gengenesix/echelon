@@ -88,7 +88,9 @@ jobs:
 
       - name: Build NSIS installer
         shell: cmd
-        run: makensis installer.nsi
+        run: |
+          set PATH=%PATH%;C:\Program Files (x86)\NSIS
+          makensis installer.nsi
 
       - name: Verify installer
         shell: cmd
