@@ -1,0 +1,194 @@
+name: Build Echelon — All Platforms
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+
+  # ─── WINDOWS ──────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 opencv-python onnxruntime insightface Pillow psutil requests tqdm pyinstaller
+          # pyvirtualcam is Linux-only, skip on Windows
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller `
+            --name=Echelon `
+            --onedir `
+            --windowed `
+            --icon=assets/icons/echelon.ico `
+            --add-data="assets/styles/theme.qss;assets/styles" `
+            --add-data="assets/icons;assets/icons" `
+            --hidden-import=PyQt6.QtCore `
+            --hidden-import=PyQt6.QtGui `
+            --hidden-import=PyQt6.QtWidgets `
+            --hidden-import=cv2 `
+            --hidden-import=onnxruntime `
+            --hidden-import=insightface `
+            --clean `
+            --noconfirm `
+            main.py
+        shell: pwsh
+
+      - name: Create NSIS installer
+        uses: joncloud/makensis-action@v4
+        with:
+          script-file: installer.nsi
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-Windows-Installer
+          path: Echelon-Setup.exe
+
+  # ─── MACOS ────────────────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 opencv-python onnxruntime insightface Pillow psutil requests tqdm pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller \
+            --name=Echelon \
+            --onedir \
+            --windowed \
+            --icon=assets/icons/icon_1024.png \
+            --osx-bundle-identifier=com.zero.echelon \
+            --add-data="assets/styles/theme.qss:assets/styles" \
+            --add-data="assets/icons:assets/icons" \
+            --hidden-import=PyQt6.QtCore \
+            --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets \
+            --hidden-import=cv2 \
+            --hidden-import=onnxruntime \
+            --hidden-import=insightface \
+            --clean \
+            --noconfirm \
+            main.py
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "Echelon" \
+            --volicon "assets/icons/icon_1024.png" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "Echelon.app" 175 120 \
+            --hide-extension "Echelon.app" \
+            --app-drop-link 425 120 \
+            --background "assets/icons/icon_1024.png" \
+            "Echelon-macOS.dmg" \
+            "dist/Echelon.app"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-macOS-DMG
+          path: Echelon-macOS.dmg
+
+  # ─── LINUX ────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libgl1 libglib2.0-0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxkbcommon-x11-0
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 opencv-python onnxruntime insightface Pillow psutil requests tqdm pyvirtualcam pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller echelon.spec --clean --noconfirm
+
+      - name: Build .deb package
+        run: |
+          chmod +x package_deb.sh
+          bash package_deb.sh
+
+      - name: Build AppImage
+        run: |
+          chmod +x package_appimage.sh
+          bash package_appimage.sh
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-Linux
+          path: |
+            echelon_2.0.0_amd64.deb
+            Echelon-x86_64.AppImage
+
+  # ─── RELEASE ──────────────────────────────────────────────────
+  create-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Echelon ${{ github.ref_name }}
+          body: |
+            ## Echelon ${{ github.ref_name }}
+            Real-time face swap for video calls. Created by **Zero**.
+
+            ### Downloads
+            | Platform | File | Notes |
+            |---|---|---|
+            | 🪟 Windows | `Echelon-Setup.exe` | Double-click to install |
+            | 🍎 macOS | `Echelon-macOS.dmg` | Drag to Applications |
+            | 🐧 Linux | `echelon_2.0.0_amd64.deb` | `sudo dpkg -i` |
+            | 🐧 Linux | `Echelon-x86_64.AppImage` | No install needed |
+
+            ### Requirements
+            - 8GB RAM minimum
+            - Webcam
+            - Linux: v4l2loopback kernel module
+
+          files: |
+            Echelon-Windows-Installer/Echelon-Setup.exe
+            Echelon-macOS-DMG/Echelon-macOS.dmg
+            Echelon-Linux/echelon_2.0.0_amd64.deb
+            Echelon-Linux/Echelon-x86_64.AppImage

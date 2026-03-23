@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Echelon
+Comment=Real-time face swap for video calls
+Exec=Echelon
+Icon=echelon_logo
+Terminal=false
+Type=Application
+Categories=Video;AudioVideo;Graphics;

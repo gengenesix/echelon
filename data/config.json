@@ -1,0 +1,22 @@
+{
+  "performance_mode": "quality",
+  "camera_device_id": 0,
+  "virtual_camera_device": "/dev/video10",
+  "output_width": 1280,
+  "output_height": 720,
+  "output_fps": 30,
+  "active_source_face_path": "/home/zero/Downloads/heattt.jpg",
+  "window_x": 100,
+  "window_y": 100,
+  "window_width": 1100,
+  "window_height": 700,
+  "launch_on_login": false,
+  "start_minimized": false,
+  "log_level": "INFO",
+  "first_launch": false,
+  "models_dir": "/home/zero/xeroclaw/echelon/models",
+  "data_dir": "/home/zero/xeroclaw/echelon/data",
+  "frame_skip": 1,
+  "face_detect_interval": 5,
+  "auto_tune": false
+}

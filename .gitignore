@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+build/
+dist/
+vendor/
+Echelon.AppDir/
+echelon_2.0.0_amd64/
+*.deb
+*.AppImage
+appimagetool-x86_64.AppImage
+models/models/
+*.onnx
+logs/
+data/faces/
+.matplotlib/

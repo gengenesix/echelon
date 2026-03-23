@@ -1,0 +1,6 @@
+Echelon v2.0
+Copyright (c) 2026 Zero. All rights reserved.
+
+This software was created by Zero.
+Redistribution and use in source and binary forms, with or without modification,
+are not permitted without explicit written permission from the creator.
