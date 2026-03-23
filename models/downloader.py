@@ -1,9 +1,18 @@
 import os
+import sys
 import hashlib
 import requests
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
-import insightface
+
+# Lazy import insightface — don't crash at startup if onnxruntime DLL fails
+# This is the top-level import that triggers the DLL load
+def _try_import_insightface():
+    try:
+        import insightface
+        return insightface
+    except (ImportError, OSError) as e:
+        return None
 
 class ModelDownloader(QThread):
     progress_updated = pyqtSignal(int, str)

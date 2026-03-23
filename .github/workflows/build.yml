@@ -89,6 +89,35 @@ jobs:
           --noconfirm
           main.py
 
+      - name: Bundle VC++ DLLs into app
+        shell: powershell
+        run: |
+          # Copy critical VC++ runtime DLLs directly into the app folder
+          # This ensures they're available even without system VC++ install
+          $vcDlls = @(
+            "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+            "vcruntime140.dll", "vcruntime140_1.dll",
+            "concrt140.dll", "vccorlib140.dll"
+          )
+          $sysDirs = @(
+            "$env:SystemRoot\System32",
+            "$env:SystemRoot\SysWOW64",
+            "C:\Windows\System32",
+            "C:\Program Files (x86)\Microsoft Visual Studio\Shared\VC\Redist\MSVC\14.40.33807\x64\Microsoft.VC143.CRT"
+          )
+          $dest = "dist\Echelon"
+          foreach ($dll in $vcDlls) {
+            foreach ($dir in $sysDirs) {
+              $src = Join-Path $dir $dll
+              if (Test-Path $src) {
+                Copy-Item $src $dest -Force
+                Write-Host "Copied: $dll"
+                break
+              }
+            }
+          }
+          Write-Host "DLL bundling complete"
+
       - name: Install NSIS
         shell: powershell
         run: |
