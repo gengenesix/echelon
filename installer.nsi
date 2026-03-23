@@ -28,10 +28,6 @@ ShowInstDetails show
 !define MUI_ABORTWARNING
 !define MUI_ICON                          "assets\icons\echelon.ico"
 !define MUI_UNICON                        "assets\icons\echelon.ico"
-!define MUI_WELCOMEFINISHPAGE_BITMAP      "assets\icons\installer_banner.bmp"
-!define MUI_HEADERIMAGE
-!define MUI_HEADERIMAGE_BITMAP            "assets\icons\installer_header.bmp"
-!define MUI_HEADERIMAGE_RIGHT
 !define MUI_WELCOMEPAGE_TITLE             "Welcome to Echelon v${APP_VERSION}"
 !define MUI_WELCOMEPAGE_TEXT              "Echelon lets you swap your face in real-time during any video call.$\r$\n$\r$\nWorks with Zoom, Google Meet, Discord, WhatsApp, and Teams.$\r$\n$\r$\nCreated by Zero."
 !define MUI_FINISHPAGE_RUN                "$INSTDIR\${APP_EXE}"
