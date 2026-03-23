@@ -79,7 +79,7 @@ def main():
     # Load stylesheet
     qss_path = Path(__file__).parent / "assets" / "styles" / "theme.qss"
     if qss_path.exists():
-        app.setStyleSheet(qss_path.read_text())
+        app.setStyleSheet(qss_path.read_text(encoding='utf-8'))
         logger.info("Stylesheet loaded")
 
     # Set app icon
