@@ -1,16 +1,22 @@
 import json
 import os
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-BASE_DIR = Path.home() / "xeroclaw" / "echelon"
+if sys.platform == "win32":
+    BASE_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Echelon"
+else:
+    BASE_DIR = Path.home() / ".echelon"
 CONFIG_PATH = BASE_DIR / "data" / "config.json"
+
+_default_vcam = "" if sys.platform == "win32" else "/dev/video10"
 
 @dataclass
 class AppConfig:
     performance_mode: str = "balanced"
     camera_device_id: int = 0
-    virtual_camera_device: str = "/dev/video10"
+    virtual_camera_device: str = _default_vcam
     output_width: int = 1280
     output_height: int = 720
     output_fps: int = 30

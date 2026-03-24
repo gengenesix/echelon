@@ -1,3 +1,4 @@
+import sys
 import cv2
 import numpy as np
 from utils.logger import get_logger
@@ -16,18 +17,37 @@ class VirtualCameraOutput:
     def start(self) -> bool:
         try:
             import pyvirtualcam
-            self._camera = pyvirtualcam.Camera(
-                width=self.width,
-                height=self.height,
-                fps=self.fps,
-                device=self.device,
-                fmt=pyvirtualcam.PixelFormat.RGB,
-            )
+            if sys.platform == "win32":
+                # On Windows, pyvirtualcam uses OBS Virtual Camera — no device param
+                self._camera = pyvirtualcam.Camera(
+                    width=self.width,
+                    height=self.height,
+                    fps=self.fps,
+                    fmt=pyvirtualcam.PixelFormat.RGB,
+                )
+            else:
+                self._camera = pyvirtualcam.Camera(
+                    width=self.width,
+                    height=self.height,
+                    fps=self.fps,
+                    device=self.device,
+                    fmt=pyvirtualcam.PixelFormat.RGB,
+                )
             self.available = True
             logger.info(f"Virtual camera started: {self.device} {self.width}x{self.height}@{self.fps}")
             return True
+        except ImportError:
+            logger.warning("pyvirtualcam not installed. Virtual camera disabled.")
+            self.available = False
+            return False
         except Exception as e:
-            logger.warning(f"Virtual camera not available: {e}. Continuing without it.")
+            if sys.platform == "win32":
+                logger.warning(
+                    f"Virtual camera unavailable: {e}. "
+                    "On Windows, install OBS Studio and enable the OBS Virtual Camera plugin."
+                )
+            else:
+                logger.warning(f"Virtual camera not available: {e}. Continuing without it.")
             self.available = False
             return False
 

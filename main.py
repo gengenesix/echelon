@@ -1,5 +1,14 @@
 import sys
 import os
+
+# ── Windows DPI awareness (must be before Qt initializes) ──
+if sys.platform == "win32":
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
 import signal
 import logging
 from pathlib import Path
@@ -7,7 +16,7 @@ from pathlib import Path
 # ── Speed up startup: disable slow network checks before ANY imports ──
 os.environ.setdefault("ALBUMENTATIONS_DISABLE_VERSION_CHECK", "1")
 os.environ.setdefault("MPLCONFIGDIR", str(Path.home() / ".cache" / "matplotlib"))
-os.environ.setdefault("MPLBACKEND", "Agg")  # headless matplotlib (insightface uses it)
+os.environ["MPLBACKEND"] = "Agg"  # force headless matplotlib (insightface uses it)
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 from PyQt6.QtWidgets import QApplication, QSplashScreen, QLabel

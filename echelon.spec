@@ -44,16 +44,16 @@ a = Analysis(
         'numpy.testing', 'numpy.testing._private',
         # System
         'psutil', 'requests', 'tqdm', 'pyvirtualcam',
+        'cv2.dnn',
         'sklearn', 'sklearn.metrics', 'sklearn.metrics.pairwise',
     ],
     hookspath=[],
     runtime_hooks=[],
     excludes=['tkinter', '_tkinter'],
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz, a.scripts, [],

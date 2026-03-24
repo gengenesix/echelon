@@ -26,7 +26,7 @@ jobs:
         shell: cmd
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime==1.19.2 insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyinstaller
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime==1.19.2 insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam pyinstaller
 
       - name: Prepare data dirs
         shell: cmd
@@ -79,6 +79,8 @@ jobs:
           --hidden-import=unittest.mock
           --hidden-import=numpy.testing
           --collect-all=insightface
+          --collect-all=onnxruntime
+          --collect-all=albumentations
           --collect-submodules=onnxruntime.capi
           --exclude-module=onnx.reference
           --exclude-module=onnxruntime.quantization

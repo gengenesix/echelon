@@ -75,8 +75,13 @@ FunctionEnd
 Section "Echelon" SecMain
   SectionIn RO
 
+  ; Kill any running Echelon instance before extracting (prevents "file locked" errors on reinstall)
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "Echelon.exe" /T'
+  Sleep 1500
+
   ; Install app files
   SetOutPath "$INSTDIR"
+  SetOverwrite on
   File /r "dist\Echelon\*.*"
 
   ; Install VC++ redist
@@ -119,6 +124,7 @@ SectionEnd
 ; ── Uninstaller ──────────────────────────────────────
 Section "Uninstall"
   ExecWait 'taskkill /F /IM "${APP_EXE}" /T'
+  Sleep 1000
   RMDir /r "$INSTDIR"
   Delete "$SMPROGRAMS\Echelon\Echelon.lnk"
   Delete "$SMPROGRAMS\Echelon\Uninstall.lnk"

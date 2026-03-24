@@ -1,3 +1,4 @@
+import sys
 import cv2
 import queue
 import threading
@@ -69,10 +70,21 @@ class CameraCapture:
         logger.info("Camera stopped")
 
     def list_cameras(self) -> List[Dict]:
-        """Fast camera enumeration — check /dev/video* directly instead of probing each index."""
-        import glob
+        """Fast camera enumeration — platform-aware."""
         cameras = []
-        # First try fast path via /dev/video*
+        if sys.platform == "win32":
+            # On Windows use DirectShow to enumerate cameras
+            for i in range(8):
+                try:
+                    cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                    if cap.isOpened():
+                        cameras.append({"id": i, "name": f"Camera {i}"})
+                        cap.release()
+                except Exception:
+                    pass
+            return cameras if cameras else [{"id": 0, "name": "Default Camera"}]
+        # Linux/Mac: try fast path via /dev/video*
+        import glob
         video_devs = sorted(glob.glob("/dev/video*"))
         if video_devs:
             for dev in video_devs[:8]:
