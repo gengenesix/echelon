@@ -165,43 +165,80 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(12)
         outer_layout.addWidget(content)
 
-        # Left sidebar
-        sidebar = _make_card_frame()
-        sidebar.setFixedWidth(280)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(12, 16, 12, 12)
-        sidebar_layout.setSpacing(12)
+        # Left sidebar — scrollable with pinned START/STOP
+        from PyQt6.QtWidgets import QScrollArea
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(272)
+        sidebar_outer = QVBoxLayout(sidebar)
+        sidebar_outer.setContentsMargins(0, 0, 0, 0)
+        sidebar_outer.setSpacing(0)
+
+        # Scrollable content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollArea > QWidget > QWidget { background: transparent; }")
+
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        sidebar_layout = QVBoxLayout(scroll_content)
+        sidebar_layout.setContentsMargins(12, 12, 12, 8)
+        sidebar_layout.setSpacing(8)
 
         self.face_panel = FacePanel()
         sidebar_layout.addWidget(self.face_panel)
-
-        sidebar_layout.addWidget(Divider())
 
         self.controls_panel = ControlsPanel()
         self.controls_panel.set_mode(self.config.performance_mode)
         sidebar_layout.addWidget(self.controls_panel)
 
-        sidebar_layout.addStretch()
-
-        sidebar_layout.addWidget(Divider())
-        sidebar_layout.addWidget(SectionLabel("PRESETS"))
+        # Presets section
+        from ui.widgets import SectionCard
+        preset_card = SectionCard("Presets")
         preset_row = QHBoxLayout()
-        preset_row.setSpacing(4)
+        preset_row.setSpacing(6)
         self._preset_combo = QComboBox()
-        self._preset_combo.setMinimumWidth(80)
         self._load_preset_btn = QPushButton("Load")
-        self._load_preset_btn.setFixedWidth(46)
-        self._load_preset_btn.setStyleSheet("font-size: 11px; padding: 3px 6px;")
+        self._load_preset_btn.setFixedWidth(52)
         self._load_preset_btn.clicked.connect(self._on_load_preset)
-        preset_row.addWidget(self._preset_combo)
+        preset_row.addWidget(self._preset_combo, 1)
         preset_row.addWidget(self._load_preset_btn)
-        sidebar_layout.addLayout(preset_row)
+        preset_card.add_layout(preset_row)
+        sidebar_layout.addWidget(preset_card)
 
         settings_btn = QPushButton("⚙  Settings")
-        settings_btn.setObjectName("settingsBtn")
-        settings_btn.setStyleSheet("color: #8888A0; background: transparent; border: none; text-align: left; padding: 4px 0;")
+        settings_btn.setStyleSheet("color: #6B7094; background: transparent; border: none; text-align: left; padding: 6px 4px; font-size: 12px;")
         settings_btn.clicked.connect(self._show_settings)
         sidebar_layout.addWidget(settings_btn)
+
+        sidebar_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        sidebar_outer.addWidget(scroll, 1)
+
+        # Pinned START/STOP at bottom — always visible
+        btn_frame = QFrame()
+        btn_frame.setObjectName("btnFrame")
+        btn_layout = QVBoxLayout(btn_frame)
+        btn_layout.setContentsMargins(12, 10, 12, 12)
+        btn_layout.setSpacing(6)
+
+        self._start_btn_main = QPushButton("▶  START")
+        self._start_btn_main.setObjectName("startBtn")
+        self._start_btn_main.setFixedHeight(48)
+        self._start_btn_main.clicked.connect(lambda: self.controls_panel.start_clicked.emit())
+        btn_layout.addWidget(self._start_btn_main)
+
+        self._stop_btn_main = QPushButton("⏹  STOP")
+        self._stop_btn_main.setObjectName("stopBtn")
+        self._stop_btn_main.setFixedHeight(40)
+        self._stop_btn_main.setEnabled(False)
+        self._stop_btn_main.clicked.connect(lambda: self.controls_panel.stop_clicked.emit())
+        btn_layout.addWidget(self._stop_btn_main)
+
+        sidebar_outer.addWidget(btn_frame)
 
         # Right area
         right_layout = QVBoxLayout()
@@ -322,6 +359,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Source Face",
                 "Please upload a face photo before starting.")
             return
+        # Update pinned buttons
+        self._start_btn_main.setEnabled(False)
+        self._stop_btn_main.setEnabled(True)
         self.controls_panel.start_btn.set_state("loading")
         self.config.camera_device_id = self.controls_panel._cam_combo.currentData() or 0
         self.pipeline = EchelonPipeline(self.config, self.hw_info)
@@ -342,6 +382,9 @@ class MainWindow(QMainWindow):
         if self.pipeline:
             self.pipeline.stop()
             self.pipeline = None
+        # Update pinned buttons
+        self._start_btn_main.setEnabled(True)
+        self._stop_btn_main.setEnabled(False)
         self.controls_panel.start_btn.set_state("idle")
         self.preview_panel.set_active(False)
         self.status_bar_widget.update_status("Idle")

@@ -1,97 +1,22 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QComboBox)
-from PyQt6.QtCore import pyqtSignal, Qt, QTimer
-from ui.widgets import SectionLabel, Divider
-
-_START_STYLE = """
-    QPushButton {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 #5C5FFF, stop:1 #7B7EFF);
-        color: white;
-        border: none;
-        border-radius: 12px;
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 1px;
-    }
-    QPushButton:hover {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 #7B7EFF, stop:1 #9C9FFF);
-    }
-    QPushButton:pressed { background: #4345CC; }
-    QPushButton:disabled { background: #1A1B24; color: #50516A; }
-"""
-
-_STOP_STYLE = """
-    QPushButton {
-        background: #1A1B24;
-        color: #FF5CA8;
-        border: 1px solid #FF5CA8;
-        border-radius: 12px;
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 1px;
-    }
-    QPushButton:hover { background: #FF2D6B; color: white; border-color: #FF2D6B; }
-    QPushButton:pressed { background: #CC1050; border-color: #CC1050; }
-"""
-
-_LOADING_STYLE = """
-    QPushButton {
-        background: #1A1B30;
-        color: #8B8CA8;
-        border: 1px solid #252632;
-        border-radius: 12px;
-        font-size: 15px;
-        font-weight: 700;
-    }
-"""
-
-
-class StartStopButton(QPushButton):
-    _spinner_chars = ["◐", "◓", "◑", "◒"]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(52)
-        self._state = "idle"
-        self._spinner_idx = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._spin)
-        self.set_state("idle")
-
-    def set_state(self, state: str):
-        self._state = state
-        if state == "loading":
-            self.setEnabled(False)
-            self.setStyleSheet(_LOADING_STYLE)
-            self._timer.start(150)
-        else:
-            self._timer.stop()
-            if state == "live":
-                self.setText("⏹  STOP")
-                self.setStyleSheet(_STOP_STYLE)
-            else:
-                self.setText("▶  START")
-                self.setStyleSheet(_START_STYLE)
-            self.setEnabled(True)
-
-    def _spin(self):
-        self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_chars)
-        self.setText(f"  {self._spinner_chars[self._spinner_idx]} Initializing...")
+from PyQt6.QtCore import pyqtSignal
+from ui.widgets import SectionCard
 
 
 class ControlsPanel(QWidget):
     mode_changed = pyqtSignal(str)
     camera_changed = pyqtSignal(int)
-    start_clicked = pyqtSignal()
-    stop_clicked = pyqtSignal()
     target_face_changed = pyqtSignal(str)
     bg_blur_changed = pyqtSignal(str)
+
+    _TARGET_FACE_MODES = ["largest", "smallest", "all", "face_1", "face_2", "face_3"]
+    _BG_BLUR_MODES = ["off", "light", "heavy"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mode = "balanced"
+        self._mode_btns = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -99,49 +24,42 @@ class ControlsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        layout.addWidget(SectionLabel("PERFORMANCE"))
-
+        # ── Performance Section ──
+        perf_card = SectionCard("Performance")
         mode_row = QHBoxLayout()
         mode_row.setSpacing(4)
-        self._mode_btns = {}
-        for mode in ("quality", "balanced", "speed"):
-            btn = QPushButton(mode.capitalize())
+        for label, mode in [("⚡ Speed", "speed"), ("⚖ Balanced", "balanced"), ("✨ Quality", "quality")]:
+            btn = QPushButton(label)
             btn.setObjectName("modeBtn")
             btn.setProperty("selected", mode == "balanced")
             btn.clicked.connect(lambda checked, m=mode: self._on_mode(m))
             self._mode_btns[mode] = btn
             mode_row.addWidget(btn)
-        layout.addLayout(mode_row)
+        perf_card.add_layout(mode_row)
+        layout.addWidget(perf_card)
 
-        layout.addWidget(Divider())
-
-        layout.addWidget(SectionLabel("CAMERA"))
-
+        # ── Camera Section ──
+        cam_card = SectionCard("Camera")
         self._cam_combo = QComboBox()
         self._cam_combo.currentIndexChanged.connect(self._on_camera_changed)
-        layout.addWidget(self._cam_combo)
+        cam_card.add_widget(self._cam_combo)
+        layout.addWidget(cam_card)
 
-        layout.addWidget(Divider())
-
-        layout.addWidget(SectionLabel("TARGET FACE"))
+        # ── Target Face Section ──
+        target_card = SectionCard("Target Face")
         self._target_face_combo = QComboBox()
         self._target_face_combo.addItems(["Largest", "Smallest", "All", "Face 1", "Face 2", "Face 3"])
         self._target_face_combo.currentIndexChanged.connect(self._on_target_face_changed)
-        layout.addWidget(self._target_face_combo)
+        target_card.add_widget(self._target_face_combo)
+        layout.addWidget(target_card)
 
-        layout.addWidget(Divider())
-
-        layout.addWidget(SectionLabel("BACKGROUND BLUR"))
+        # ── Background Blur Section ──
+        blur_card = SectionCard("Background Blur")
         self._bg_blur_combo = QComboBox()
         self._bg_blur_combo.addItems(["Off", "Light", "Heavy"])
         self._bg_blur_combo.currentIndexChanged.connect(self._on_bg_blur_changed)
-        layout.addWidget(self._bg_blur_combo)
-
-        layout.addWidget(Divider())
-
-        self.start_btn = StartStopButton()
-        self.start_btn.clicked.connect(self._on_start_stop)
-        layout.addWidget(self.start_btn)
+        blur_card.add_widget(self._bg_blur_combo)
+        layout.addWidget(blur_card)
 
     def _on_mode(self, mode: str):
         self._mode = mode
@@ -155,15 +73,6 @@ class ControlsPanel(QWidget):
         data = self._cam_combo.itemData(idx)
         if data is not None:
             self.camera_changed.emit(data)
-
-    def _on_start_stop(self):
-        if self.start_btn._state in ("idle",):
-            self.start_clicked.emit()
-        elif self.start_btn._state == "live":
-            self.stop_clicked.emit()
-
-    _TARGET_FACE_MODES = ["largest", "smallest", "all", "face_1", "face_2", "face_3"]
-    _BG_BLUR_MODES = ["off", "light", "heavy"]
 
     def _on_target_face_changed(self, idx: int):
         mode = self._TARGET_FACE_MODES[idx] if idx < len(self._TARGET_FACE_MODES) else "largest"

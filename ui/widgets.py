@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QFrame, QLabel, QWidget, QHBoxLayout
+from PyQt6.QtWidgets import QFrame, QLabel, QWidget, QHBoxLayout, QVBoxLayout
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty, QByteArray
 from PyQt6.QtGui import QColor
 
@@ -81,3 +81,38 @@ class Divider(QFrame):
         self.setFrameShadow(QFrame.Shadow.Sunken)
         self.setFixedHeight(1)
         self.setStyleSheet("background-color: #2A2A35; border: none;")
+
+
+class SectionCard(QFrame):
+    """A card container with a clearly labeled header."""
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("sectionCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        header = QLabel(title.upper())
+        header.setObjectName("sectionHeader")
+        layout.addWidget(header)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background: #1E1F2E; max-height: 1px; border: none;")
+        layout.addWidget(divider)
+
+        self._content = QWidget()
+        self._content.setStyleSheet("background: transparent;")
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(0, 4, 0, 0)
+        self._content_layout.setSpacing(8)
+        layout.addWidget(self._content)
+
+    def content_layout(self) -> QVBoxLayout:
+        return self._content_layout
+
+    def add_widget(self, widget):
+        self._content_layout.addWidget(widget)
+
+    def add_layout(self, layout):
+        self._content_layout.addLayout(layout)
