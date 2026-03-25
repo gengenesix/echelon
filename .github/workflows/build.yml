@@ -69,34 +69,33 @@ jobs:
           }
 
       - name: Install NSIS
-        shell: powershell
+        shell: cmd
         run: |
           choco install nsis --yes --no-progress
-          if (!(Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
-            Write-Error "NSIS not found after install"
-            exit 1
-          }
-          Write-Host "NSIS installed"
+          if not exist "C:\Program Files (x86)\NSIS\makensis.exe" (
+            echo NSIS not found after install
+            exit /b 1
+          )
+          echo NSIS installed OK
 
       - name: Build NSIS installer
-        shell: powershell
+        shell: cmd
         run: |
-          $env:PATH += ";C:\Program Files (x86)\NSIS"
-          & "C:\Program Files (x86)\NSIS\makensis.exe" /V4 installer.nsi
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "NSIS build failed with code $LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
+          set PATH=%PATH%;C:\Program Files (x86)\NSIS
+          "C:\Program Files (x86)\NSIS\makensis.exe" /V4 installer.nsi
+          if errorlevel 1 exit /b 1
 
       - name: Verify installer
         shell: powershell
         run: |
-          if (!(Test-Path "Echelon-Setup.exe")) {
-            Write-Error "Installer not found!"
+          $installerPath = "Echelon-Setup.exe"
+          if (!(Test-Path $installerPath)) {
+            Write-Error "Installer not found"
             exit 1
           }
-          $size = (Get-Item "Echelon-Setup.exe").Length
-          Write-Host "Installer: $([math]::Round($size/1MB, 0)) MB — OK"
+          $size = (Get-Item $installerPath).Length
+          $sizeMB = [math]::Round($size/1MB, 0)
+          Write-Host "Installer size: $sizeMB MB - OK"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
