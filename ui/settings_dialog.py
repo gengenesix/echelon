@@ -1,11 +1,12 @@
+import sys
 import subprocess
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QCheckBox, QComboBox, QLineEdit,
                               QGroupBox, QFormLayout, QSlider, QMessageBox,
-                              QInputDialog, QWidget)
+                              QInputDialog)
 from PyQt6.QtCore import Qt
-from config.manager import AppConfig
+from config.manager import AppConfig, BASE_DIR
 
 
 def _grp_style():
@@ -197,9 +198,14 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def _open_log(self):
-        log_path = Path.home() / "xeroclaw" / "echelon" / "logs" / "echelon.log"
+        log_path = BASE_DIR / "logs" / "echelon.log"
         try:
-            subprocess.Popen(["xdg-open", str(log_path)])
+            if sys.platform == "win32":
+                subprocess.Popen(["notepad.exe", str(log_path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(log_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(log_path)])
         except Exception:
             pass
 

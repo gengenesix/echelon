@@ -1,4 +1,4 @@
-import os
+import sys
 import subprocess
 import psutil
 from dataclasses import dataclass, field
@@ -6,6 +6,7 @@ from typing import List
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 @dataclass
 class HardwareInfo:
@@ -19,22 +20,21 @@ class HardwareInfo:
     recommended_mode: str = "balanced"
     onnx_providers: List[str] = field(default_factory=list)
 
+
 class HardwareDetector:
     def detect(self) -> HardwareInfo:
         info = HardwareInfo()
+
         # RAM
         mem = psutil.virtual_memory()
         info.ram_gb = mem.total / (1024 ** 3)
-        # CPU
-        info.cpu_cores = psutil.cpu_count(logical=True)
-        try:
-            with open("/proc/cpuinfo") as f:
-                for line in f:
-                    if "model name" in line:
-                        info.cpu_name = line.split(":")[1].strip()
-                        break
-        except Exception:
-            info.cpu_name = "Unknown CPU"
+
+        # CPU cores
+        info.cpu_cores = psutil.cpu_count(logical=True) or 1
+
+        # CPU name — platform-aware
+        info.cpu_name = self._get_cpu_name()
+
         # ONNX providers
         try:
             import onnxruntime as ort
@@ -47,11 +47,13 @@ class HardwareDetector:
                 info.onnx_providers = ["CPUExecutionProvider"]
         except Exception:
             info.onnx_providers = ["CPUExecutionProvider"]
+
         # GPU info via nvidia-smi
         if info.has_cuda:
             try:
                 result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                    ["nvidia-smi", "--query-gpu=name,memory.total",
+                     "--format=csv,noheader,nounits"],
                     capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
@@ -62,6 +64,7 @@ class HardwareDetector:
                         info.has_gpu = True
             except Exception:
                 pass
+
         # Recommended mode
         if info.has_cuda and info.gpu_vram_gb >= 4:
             info.recommended_mode = "quality"
@@ -69,7 +72,37 @@ class HardwareDetector:
             info.recommended_mode = "balanced"
         else:
             info.recommended_mode = "speed"
+
         return info
+
+    def _get_cpu_name(self) -> str:
+        """Get CPU name — works on Windows, Linux, and macOS."""
+        try:
+            if sys.platform == "win32":
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+                )
+                name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+                winreg.CloseKey(key)
+                return name.strip()
+            elif sys.platform == "darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True, text=True, timeout=3
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            else:
+                # Linux — read /proc/cpuinfo
+                with open("/proc/cpuinfo") as f:
+                    for line in f:
+                        if "model name" in line:
+                            return line.split(":")[1].strip()
+        except Exception:
+            pass
+        return "Unknown CPU"
 
     def log_system_info(self, info: HardwareInfo):
         logger.info(f"RAM: {info.ram_gb:.1f} GB")

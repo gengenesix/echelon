@@ -10,6 +10,7 @@ jobs:
 
   # ═══════════════════════════════════════════
   # WINDOWS — .exe installer via NSIS
+  # VC++ runtime installed via official redist, NOT bundled in _internal\
   # ═══════════════════════════════════════════
   build-windows:
     runs-on: windows-latest
@@ -22,11 +23,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         shell: cmd
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime==1.19.2 insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam pyinstaller
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime==1.19.2 insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam onnx pyinstaller
 
       - name: Prepare data dirs
         shell: cmd
@@ -37,106 +38,64 @@ jobs:
       - name: Download VC++ Redistributable
         shell: powershell
         run: |
-          # Download the VC++ 2015-2022 redistributable for bundling
+          Write-Host "Downloading VC++ 2015-2022 Redistributable..."
           Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "vc_redist.x64.exe"
-          echo "VC++ redist downloaded: $(Get-Item vc_redist.x64.exe | Select-Object -ExpandProperty Length) bytes"
+          $size = (Get-Item vc_redist.x64.exe).Length
+          Write-Host "Downloaded: $([math]::Round($size/1MB, 1)) MB"
 
-      - name: Build with PyInstaller
+      - name: Build with PyInstaller (using spec file)
         shell: cmd
-        run: >
-          pyinstaller
-          --name=Echelon
-          --onedir
-          --windowed
-          --icon=assets\icons\echelon.ico
-          --add-data="assets\styles\theme.qss;assets\styles"
-          --add-data="assets\icons;assets\icons"
-          --add-data="data;data"
-          --hidden-import=PyQt6.QtCore
-          --hidden-import=PyQt6.QtGui
-          --hidden-import=PyQt6.QtWidgets
-          --hidden-import=PyQt6.sip
-          --hidden-import=cv2
-          --hidden-import=numpy
-          --hidden-import=onnxruntime
-          --hidden-import=onnxruntime.capi._pybind_state
-          --hidden-import=insightface
-          --hidden-import=insightface.app
-          --hidden-import=insightface.model_zoo
-          --hidden-import=matplotlib
-          --hidden-import=matplotlib.pyplot
-          --hidden-import=matplotlib.backends.backend_agg
-          --hidden-import=PIL
-          --hidden-import=PIL.Image
-          --hidden-import=psutil
-          --hidden-import=requests
-          --hidden-import=tqdm
-          --hidden-import=sklearn
-          --hidden-import=scipy
-          --hidden-import=scipy.spatial
-          --hidden-import=albumentations
-          --hidden-import=unittest
-          --hidden-import=unittest.mock
-          --hidden-import=numpy.testing
-          --collect-all=insightface
-          --collect-all=onnxruntime
-          --collect-all=albumentations
-          --collect-submodules=onnxruntime.capi
-          --exclude-module=onnx.reference
-          --exclude-module=onnxruntime.quantization
-          --exclude-module=onnxruntime.transformers
-          --exclude-module=onnxruntime.training
-          --exclude-module=sympy
-          --exclude-module=Cython
-          --noconfirm
-          main.py
+        run: |
+          pyinstaller --noconfirm echelon.spec
+          if errorlevel 1 exit /b 1
 
-      - name: Bundle VC++ DLLs into app
+      - name: Verify build output
         shell: powershell
         run: |
-          # Copy critical VC++ runtime DLLs directly into the app folder
-          # This ensures they're available even without system VC++ install
-          $vcDlls = @(
-            "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
-            "vcruntime140.dll", "vcruntime140_1.dll",
-            "concrt140.dll", "vccorlib140.dll"
-          )
-          $sysDirs = @(
-            "$env:SystemRoot\System32",
-            "$env:SystemRoot\SysWOW64",
-            "C:\Windows\System32",
-            "C:\Program Files (x86)\Microsoft Visual Studio\Shared\VC\Redist\MSVC\14.40.33807\x64\Microsoft.VC143.CRT"
-          )
-          $dest = "dist\Echelon"
-          foreach ($dll in $vcDlls) {
-            foreach ($dir in $sysDirs) {
-              $src = Join-Path $dir $dll
-              if (Test-Path $src) {
-                Copy-Item $src $dest -Force
-                Write-Host "Copied: $dll"
-                break
-              }
-            }
+          if (!(Test-Path "dist\Echelon\Echelon.exe")) {
+            Write-Error "Build failed: Echelon.exe not found in dist\Echelon\"
+            exit 1
           }
-          Write-Host "DLL bundling complete"
+          $size = (Get-ChildItem "dist\Echelon" -Recurse | Measure-Object -Property Length -Sum).Sum
+          Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB"
+          Write-Host "Echelon.exe: OK"
+          # Confirm VC++ DLLs are NOT in _internal\ (they should not be bundled)
+          $vcDlls = Get-ChildItem "dist\Echelon\_internal" -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
+          if ($vcDlls) {
+            Write-Warning "VC++ DLLs found in _internal\ — spec filter may not have worked: $($vcDlls.Name)"
+          } else {
+            Write-Host "VC++ DLL check: clean (not bundled in _internal\)"
+          }
 
       - name: Install NSIS
         shell: powershell
         run: |
           choco install nsis --yes --no-progress
-          echo "NSIS installed"
-          ls "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (!(Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            Write-Error "NSIS not found after install"
+            exit 1
+          }
+          Write-Host "NSIS installed"
 
       - name: Build NSIS installer
         shell: powershell
         run: |
           $env:PATH += ";C:\Program Files (x86)\NSIS"
-          & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /V4 installer.nsi
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "NSIS build failed with code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
 
       - name: Verify installer
-        shell: cmd
-        run: dir Echelon-Setup.exe
+        shell: powershell
+        run: |
+          if (!(Test-Path "Echelon-Setup.exe")) {
+            Write-Error "Installer not found!"
+            exit 1
+          }
+          $size = (Get-Item "Echelon-Setup.exe").Length
+          Write-Host "Installer: $([math]::Round($size/1MB, 0)) MB — OK"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -173,7 +132,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam pyinstaller
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam onnx pyinstaller
 
       - name: Prepare data dirs
         run: |
@@ -194,9 +153,12 @@ jobs:
             --hidden-import=PyQt6.QtWidgets \
             --hidden-import=PyQt6.sip \
             --hidden-import=cv2 \
+            --hidden-import=cv2.dnn \
             --hidden-import=numpy \
             --hidden-import=onnxruntime \
             --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx \
+            --hidden-import=onnx.numpy_helper \
             --hidden-import=insightface \
             --hidden-import=insightface.app \
             --hidden-import=insightface.model_zoo \
@@ -212,13 +174,33 @@ jobs:
             --hidden-import=scipy \
             --hidden-import=scipy.spatial \
             --hidden-import=albumentations \
+            --hidden-import=pyvirtualcam \
             --hidden-import=unittest \
             --hidden-import=unittest.mock \
             --hidden-import=numpy.testing \
             --collect-all=insightface \
             --collect-all=onnxruntime \
+            --collect-all=albumentations \
+            --collect-all=cv2 \
+            --exclude-module=onnx.reference \
+            --exclude-module=onnxruntime.quantization \
+            --exclude-module=onnxruntime.transformers \
+            --exclude-module=onnxruntime.training \
+            --exclude-module=tkinter \
+            --exclude-module=_tkinter \
+            --exclude-module=sympy \
+            --exclude-module=Cython \
             --noconfirm \
             main.py
+
+      - name: Verify Linux build
+        run: |
+          if [ ! -f "dist/Echelon/Echelon" ]; then
+            echo "ERROR: dist/Echelon/Echelon binary not found!"
+            exit 1
+          fi
+          du -sh dist/Echelon/
+          echo "Linux build: OK"
 
       - name: Build AppImage
         run: |
@@ -235,6 +217,7 @@ jobs:
           echo "=== Build outputs ==="
           ls -lh Echelon-x86_64.AppImage echelon_2.0.0_amd64.deb
           file Echelon-x86_64.AppImage
+          echo "All outputs verified OK"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
@@ -300,6 +283,7 @@ jobs:
             ## ⚙️ Requirements
             - 8GB RAM minimum · Webcam required
             - Linux: run `sudo apt install v4l2loopback-dkms` for virtual camera support
+            - Windows: Visual C++ 2015-2022 Runtime is installed automatically by the installer
 
           files: |
             release/Echelon-Setup.exe

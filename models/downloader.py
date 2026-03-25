@@ -1,6 +1,3 @@
-import os
-import sys
-import hashlib
 import requests
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -52,17 +49,15 @@ class ModelDownloader(QThread):
         if not inswapper_dest.exists():
             self.progress_updated.emit(0, "Downloading face swap model...")
             success = False
-            last_error = "Unknown error"
             for url in self.INSWAPPER_URLS:
                 if self._stop:
                     return
                 try:
-                    self.progress_updated.emit(0, f"Trying mirror...")
+                    self.progress_updated.emit(0, "Trying mirror...")
                     self._download_with_progress(url, inswapper_dest, "inswapper_128.onnx", 0, 85)
                     success = True
                     break
-                except Exception as e:
-                    last_error = str(e)
+                except Exception:
                     if inswapper_dest.exists():
                         inswapper_dest.unlink()
                     continue

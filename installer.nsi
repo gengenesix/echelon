@@ -1,28 +1,37 @@
-; ═══════════════════════════════════════════════════════
-; Echelon Windows Installer
-; Created by Zero
-; ═══════════════════════════════════════════════════════
+; ═══════════════════════════════════════════════════════════════════
+; Echelon Windows Installer — Rebuilt from scratch
+; Full engineering: UAC, silent kill, wait loop, uninstall previous,
+; clear dir, VC++ redist, error handling, rollback
+; ═══════════════════════════════════════════════════════════════════
 
 Unicode True
-!define APP_NAME      "Echelon"
-!define APP_VERSION   "2.0.0"
-!define APP_PUBLISHER "Zero"
-!define APP_EXE       "Echelon.exe"
-!define INSTALL_DIR   "$PROGRAMFILES64\Echelon"
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Echelon"
+SetCompressor /SOLID lzma
+
+!define APP_NAME        "Echelon"
+!define APP_VERSION     "2.0.0"
+!define APP_PUBLISHER   "Zero"
+!define APP_EXE         "Echelon.exe"
+!define INSTALL_DIR     "$PROGRAMFILES64\Echelon"
+!define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\Echelon"
+!define REG_INSTALL_KEY "Software\Echelon"
+!define VCREDIST_KEY    "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "Echelon-Setup.exe"
 InstallDir "${INSTALL_DIR}"
-InstallDirRegKey HKLM "Software\Echelon" "Install_Dir"
+InstallDirRegKey HKLM "${REG_INSTALL_KEY}" "Install_Dir"
+
+; ── UAC: always require full Administrator rights ──
 RequestExecutionLevel admin
-SetCompressor /SOLID lzma
+
 BrandingText "Echelon by Zero"
 ShowInstDetails show
+ShowUninstDetails show
 
 ; Modern UI 2
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 ; UI Settings
 !define MUI_ABORTWARNING
@@ -46,97 +55,206 @@ ShowInstDetails show
 
 !insertmacro MUI_LANGUAGE "English"
 
-; ── Helper: Check if VC++ 2022 is installed ───────────
-Function CheckVCRedist
-  ; Check for VC++ 2015-2022 x64
-  ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64" "Installed"
-  ${If} $0 == 1
-    ; Already installed
-    Return
-  ${EndIf}
-  ; Also check newer registry path
-  ReadRegStr $1 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Version"
-  ${If} $1 != ""
-    Return
-  ${EndIf}
-  ; Not found — install it
-  DetailPrint "Installing Microsoft Visual C++ Runtime (required)..."
-  SetDetailsPrint listonly
-  ExecWait '"$INSTDIR\_redist\vc_redist.x64.exe" /install /quiet /norestart' $2
-  SetDetailsPrint both
-  ${If} $2 != 0
-    ${If} $2 != 3010  ; 3010 = success, reboot required
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Visual C++ Runtime installation returned code $2. The app may not work correctly. Please install vc_redist.x64.exe manually from Microsoft."
+; ═══════════════════════════════════════════════════════════════════
+; Macro: Kill Echelon silently
+; - If process not found: exits silently, no error logged
+; - Waits up to 10 seconds (5 × 2s) for process to fully exit
+; ═══════════════════════════════════════════════════════════════════
+!macro KillEchelonSilent
+  DetailPrint "Stopping any running Echelon instances..."
+  ; Use cmd /c + 2>nul to suppress "process not found" error output entirely
+  nsExec::ExecToLog 'cmd /c taskkill /F /IM "${APP_EXE}" /T 2>nul'
+  Pop $0  ; discard return code — 128 means "not found" which is perfectly fine
+
+  ; Wait loop: verify the process is truly gone before proceeding
+  StrCpy $R0 0
+  ${Do}
+    ${If} $R0 >= 5
+      ${Break}  ; gave it 10 seconds total, move on
+    ${EndIf}
+    Sleep 2000
+    ; Check if still running via tasklist
+    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXE}" /NH 2>nul'
+    Pop $R1  ; exit code
+    Pop $R2  ; stdout
+    ; If output contains "No tasks" or is empty, process is gone
+    ${If} $R2 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $R2 == "INFO: No tasks are running which match the specified criteria."
+      ${Break}
+    ${EndIf}
+    ; Still running — retry
+    IntOp $R0 $R0 + 1
+    nsExec::ExecToLog 'cmd /c taskkill /F /IM "${APP_EXE}" /T 2>nul'
+    Pop $0
+  ${Loop}
+  DetailPrint "Process check complete."
+!macroend
+
+; ═══════════════════════════════════════════════════════════════════
+; Macro: Run previous version's uninstaller silently if found
+; ═══════════════════════════════════════════════════════════════════
+!macro RunPreviousUninstaller
+  ReadRegStr $R3 HKLM "${UNINSTALL_KEY}" "QuietUninstallString"
+  ${If} $R3 != ""
+    DetailPrint "Removing previous version..."
+    ExecWait '$R3' $R4
+    Sleep 1000
+  ${Else}
+    ReadRegStr $R3 HKLM "${UNINSTALL_KEY}" "UninstallString"
+    ${If} $R3 != ""
+      DetailPrint "Removing previous version..."
+      ExecWait '"$R3" /S' $R4
+      Sleep 1000
     ${EndIf}
   ${EndIf}
+!macroend
+
+; ═══════════════════════════════════════════════════════════════════
+; Function: Check if VC++ 2015-2022 x64 Redistributable is installed
+; Returns: 1 on stack if installed, 0 if not
+; ═══════════════════════════════════════════════════════════════════
+Function CheckVCRedistInstalled
+  ReadRegDWORD $0 HKLM "${VCREDIST_KEY}" "Installed"
+  ${If} $0 == 1
+    Push 1
+    Return
+  ${EndIf}
+  ReadRegStr $0 HKLM "${VCREDIST_KEY}" "Version"
+  ${If} $0 != ""
+    Push 1
+    Return
+  ${EndIf}
+  Push 0
 FunctionEnd
 
-; ── Main Install ─────────────────────────────────────
+; ═══════════════════════════════════════════════════════════════════
+; MAIN INSTALL SECTION
+; Phase 1: Pre-install cleanup (kill, uninstall old, clear dir)
+; Phase 2: VC++ Redistributable (check registry, install if needed)
+; Phase 3: Extract app files (with error check + rollback)
+; Phase 4: Registry + shortcuts
+; ═══════════════════════════════════════════════════════════════════
 Section "Echelon" SecMain
   SectionIn RO
 
-  ; ── STEP 1: Kill any running Echelon instances BEFORE touching files ──
-  ; This prevents "Error opening file for writing" on reinstall/upgrade
-  DetailPrint "Stopping Echelon if running..."
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXE}" /T'
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "Echelon.exe" /T'
-  ; Wait for OS to release all file handles before we overwrite
-  Sleep 1500
+  ; ── PHASE 1: Pre-installation cleanup ──────────────────────────
 
-  ; ── STEP 2: Install app files ──
+  ; Kill any running Echelon — silently, with wait loop
+  !insertmacro KillEchelonSilent
+
+  ; Run previous version's uninstaller silently if found
+  !insertmacro RunPreviousUninstaller
+
+  ; Clear the entire install directory to guarantee no stale locked files
+  ${If} ${FileExists} "$INSTDIR\*.*"
+    DetailPrint "Clearing previous installation directory..."
+    RMDir /r "$INSTDIR"
+    ; Brief wait after delete for filesystem to settle
+    Sleep 500
+  ${EndIf}
+
+  ; ── PHASE 2: VC++ Redistributable ──────────────────────────────
+
+  DetailPrint "Checking Visual C++ 2015-2022 Runtime..."
+  Call CheckVCRedistInstalled
+  Pop $0
+  ${If} $0 != 1
+    DetailPrint "Installing Visual C++ 2015-2022 Redistributable..."
+    ; Extract to temp to keep installer dir clean
+    SetOutPath "$TEMP\EchelonSetup"
+    ClearErrors
+    File "vc_redist.x64.exe"
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Could not extract VC++ installer. Continuing — the app may not work if runtime is missing."
+    ${Else}
+      ExecWait '"$TEMP\EchelonSetup\vc_redist.x64.exe" /quiet /norestart' $1
+      ${If} $1 != 0
+      ${AndIf} $1 != 3010  ; 3010 = success, reboot required — acceptable
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Visual C++ Runtime installation returned code $1.$\nThe app may not work correctly.$\nIf you have issues, run vc_redist.x64.exe from Microsoft manually."
+      ${EndIf}
+      Delete "$TEMP\EchelonSetup\vc_redist.x64.exe"
+      RMDir "$TEMP\EchelonSetup"
+    ${EndIf}
+  ${Else}
+    DetailPrint "Visual C++ Runtime already installed — skipping."
+  ${EndIf}
+
+  ; ── PHASE 3: Extract application files ─────────────────────────
+
+  DetailPrint "Installing Echelon ${APP_VERSION}..."
   SetOverwrite on
+  ClearErrors
   SetOutPath "$INSTDIR"
   File /r "dist\Echelon\*.*"
 
-  ; ── STEP 3: Install VC++ redist ──
-  SetOutPath "$INSTDIR\_redist"
-  File "vc_redist.x64.exe"
+  ; Check for extraction errors — rollback if any
+  ${If} ${Errors}
+    DetailPrint "ERROR: File extraction failed. Rolling back..."
+    RMDir /r "$INSTDIR"
+    MessageBox MB_OK|MB_ICONSTOP \
+      "Installation failed: could not write files to $INSTDIR.$\r$\n$\r$\nMake sure you are running as Administrator and no antivirus is blocking the install.$\r$\n$\r$\nInstallation has been rolled back."
+    Abort
+  ${EndIf}
 
-  ; ── STEP 4: Run VC++ check/install (must be AFTER file is copied above) ──
-  Call CheckVCRedist
+  ; ── PHASE 4: Registry — Add/Remove Programs ────────────────────
 
-  ; ── STEP 5: Write registry ──
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "DisplayName"     "Echelon"
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "DisplayIcon"     "$INSTDIR\${APP_EXE}"
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "Publisher"       "${APP_PUBLISHER}"
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "DisplayVersion"  "${APP_VERSION}"
-  WriteRegStr   HKLM "${UNINSTALL_KEY}" "URLInfoAbout"    "https://github.com/gengenesix/echelon"
-  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify"        1
-  WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair"        1
+  WriteRegStr   HKLM "${REG_INSTALL_KEY}"   "Install_Dir"           "$INSTDIR"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "DisplayName"           "${APP_NAME}"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "UninstallString"       '"$INSTDIR\uninstall.exe"'
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "QuietUninstallString"  '"$INSTDIR\uninstall.exe" /S'
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "InstallLocation"       "$INSTDIR"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "DisplayIcon"           "$INSTDIR\${APP_EXE},0"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "Publisher"             "${APP_PUBLISHER}"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "DisplayVersion"        "${APP_VERSION}"
+  WriteRegStr   HKLM "${UNINSTALL_KEY}"     "URLInfoAbout"          "https://github.com/gengenesix/echelon"
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}"     "NoModify"              1
+  WriteRegDWORD HKLM "${UNINSTALL_KEY}"     "NoRepair"              1
 
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "EstimatedSize" "$0"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  DetailPrint "Echelon installed successfully."
 SectionEnd
 
-; ── Start Menu ───────────────────────────────────────
+; ── Start Menu Shortcuts ──────────────────────────────────────────
 Section "Start Menu Shortcuts"
   CreateDirectory "$SMPROGRAMS\Echelon"
   CreateShortcut  "$SMPROGRAMS\Echelon\Echelon.lnk"   "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
   CreateShortcut  "$SMPROGRAMS\Echelon\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 
-; ── Desktop Shortcut ─────────────────────────────────
+; ── Desktop Shortcut ─────────────────────────────────────────────
 Section "Desktop Shortcut"
   CreateShortcut "$DESKTOP\Echelon.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
 SectionEnd
 
-; ── Uninstaller ──────────────────────────────────────
+; ═══════════════════════════════════════════════════════════════════
+; UNINSTALLER
+; ═══════════════════════════════════════════════════════════════════
 Section "Uninstall"
-  ; Kill process before removing files
-  ExecWait '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXE}" /T'
-  Sleep 1000
+  ; Kill process silently — suppress "not found" errors
+  nsExec::ExecToLog 'cmd /c taskkill /F /IM "${APP_EXE}" /T 2>nul'
+  Pop $0
+  Sleep 1500
+
+  ; Remove all application files
   RMDir /r "$INSTDIR"
+
+  ; Remove shortcuts
   Delete "$SMPROGRAMS\Echelon\Echelon.lnk"
   Delete "$SMPROGRAMS\Echelon\Uninstall.lnk"
   RMDir  "$SMPROGRAMS\Echelon"
   Delete "$DESKTOP\Echelon.lnk"
+
+  ; Clean up registry
   DeleteRegKey HKLM "${UNINSTALL_KEY}"
-  DeleteRegKey HKLM "Software\Echelon"
+  DeleteRegKey HKLM "${REG_INSTALL_KEY}"
+
+  ; Offer to remove user data
   MessageBox MB_YESNO "Remove Echelon settings and saved faces?" IDNO done
     RMDir /r "$APPDATA\Echelon"
   done:
