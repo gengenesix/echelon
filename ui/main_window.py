@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                               QLabel, QPushButton, QMessageBox,
-                              QFrame, QApplication, QComboBox)
+                              QFrame, QApplication, QComboBox, QScrollArea)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut, QPixmap, QIcon
 
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QScrollArea
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(272)
+        sidebar.setFixedWidth(300)
         sidebar_outer = QVBoxLayout(sidebar)
         sidebar_outer.setContentsMargins(0, 0, 0, 0)
         sidebar_outer.setSpacing(0)
@@ -445,7 +445,12 @@ class MainWindow(QMainWindow):
                 self.tray.set_active(False)
 
     def _on_error(self, msg: str):
-        QMessageBox.warning(self, "Echelon Error", msg)
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Echelon Error")
+        dlg.setText(msg)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setStyleSheet("QMessageBox { background: #0A0B0F; color: #E8E9F0; } QLabel { color: #E8E9F0; } QPushButton { background: #161722; color: #E8E9F0; border: 1px solid #252636; border-radius: 6px; padding: 6px 16px; }")
+        dlg.exec()
         self._start_btn_main.setText("▶  START"); self._start_btn_main.setEnabled(True); self._stop_btn_main.setEnabled(False)
 
     def _cycle_mode(self):
