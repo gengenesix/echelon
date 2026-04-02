@@ -1,4 +1,4 @@
-name: Build Echelon — Windows & Linux
+name: Build Echelon — Windows, Linux & macOS
 
 on:
   push:
@@ -10,7 +10,6 @@ jobs:
 
   # ═══════════════════════════════════════════
   # WINDOWS — .exe installer via NSIS
-  # VC++ runtime installed via official redist, NOT bundled in _internal\
   # ═══════════════════════════════════════════
   build-windows:
     runs-on: windows-latest
@@ -60,13 +59,6 @@ jobs:
           $size = (Get-ChildItem "dist\Echelon" -Recurse | Measure-Object -Property Length -Sum).Sum
           Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB"
           Write-Host "Echelon.exe: OK"
-          $internalDir = "dist\Echelon\_internal"
-          $vcDlls = Get-ChildItem $internalDir -Filter "vcruntime*.dll" -ErrorAction SilentlyContinue
-          if ($vcDlls) {
-            Write-Warning "VC++ DLLs found in _internal - spec filter may not have worked: $($vcDlls.Name)"
-          } else {
-            Write-Host "VC++ DLL check: clean (not bundled in _internal)"
-          }
 
       - name: Install NSIS
         shell: cmd
@@ -88,14 +80,12 @@ jobs:
       - name: Verify installer
         shell: powershell
         run: |
-          $installerPath = "Echelon-Setup.exe"
-          if (!(Test-Path $installerPath)) {
+          if (!(Test-Path "Echelon-Setup.exe")) {
             Write-Error "Installer not found"
             exit 1
           }
-          $size = (Get-Item $installerPath).Length
-          $sizeMB = [math]::Round($size/1MB, 0)
-          Write-Host "Installer size: $sizeMB MB - OK"
+          $size = (Get-Item "Echelon-Setup.exe").Length
+          Write-Host "Installer size: $([math]::Round($size/1MB, 0)) MB - OK"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -153,7 +143,6 @@ jobs:
             --hidden-import=PyQt6.QtWidgets \
             --hidden-import=PyQt6.sip \
             --hidden-import=cv2 \
-            --hidden-import=cv2.dnn \
             --hidden-import=numpy \
             --hidden-import=onnxruntime \
             --hidden-import=onnxruntime.capi._pybind_state \
@@ -163,33 +152,20 @@ jobs:
             --hidden-import=insightface.app \
             --hidden-import=insightface.model_zoo \
             --hidden-import=matplotlib \
-            --hidden-import=matplotlib.pyplot \
             --hidden-import=matplotlib.backends.backend_agg \
             --hidden-import=PIL \
-            --hidden-import=PIL.Image \
             --hidden-import=psutil \
             --hidden-import=requests \
-            --hidden-import=tqdm \
             --hidden-import=sklearn \
             --hidden-import=scipy \
-            --hidden-import=scipy.spatial \
             --hidden-import=albumentations \
             --hidden-import=pyvirtualcam \
-            --hidden-import=unittest \
-            --hidden-import=unittest.mock \
-            --hidden-import=numpy.testing \
             --collect-all=insightface \
             --collect-all=onnxruntime \
             --collect-all=albumentations \
             --collect-all=cv2 \
-            --exclude-module=onnx.reference \
-            --exclude-module=onnxruntime.quantization \
-            --exclude-module=onnxruntime.transformers \
-            --exclude-module=onnxruntime.training \
             --exclude-module=tkinter \
-            --exclude-module=_tkinter \
             --exclude-module=sympy \
-            --exclude-module=Cython \
             --noconfirm \
             main.py
 
@@ -214,9 +190,7 @@ jobs:
 
       - name: Verify outputs
         run: |
-          echo "=== Build outputs ==="
           ls -lh Echelon-x86_64.AppImage echelon_2.1.0_amd64.deb
-          file Echelon-x86_64.AppImage
           echo "All outputs verified OK"
 
       - name: Upload Linux packages
@@ -229,10 +203,117 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════
+  # macOS — .app bundle + .dmg installer
+  # Unsigned — users right-click → Open on first launch
+  # ═══════════════════════════════════════════
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib onnx pyinstaller
+          # pyvirtualcam not needed on macOS (uses OBS Virtual Camera instead)
+
+      - name: Prepare data dirs
+        run: |
+          mkdir -p data/faces
+          mkdir -p models/models/buffalo_l
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller \
+            --name=Echelon \
+            --onedir \
+            --windowed \
+            --add-data="assets/styles/theme.qss:assets/styles" \
+            --add-data="assets/icons:assets/icons" \
+            --add-data="data:data" \
+            --hidden-import=PyQt6.QtCore \
+            --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets \
+            --hidden-import=PyQt6.sip \
+            --hidden-import=cv2 \
+            --hidden-import=numpy \
+            --hidden-import=onnxruntime \
+            --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx \
+            --hidden-import=onnx.numpy_helper \
+            --hidden-import=insightface \
+            --hidden-import=insightface.app \
+            --hidden-import=insightface.model_zoo \
+            --hidden-import=matplotlib \
+            --hidden-import=matplotlib.backends.backend_agg \
+            --hidden-import=PIL \
+            --hidden-import=psutil \
+            --hidden-import=requests \
+            --hidden-import=sklearn \
+            --hidden-import=scipy \
+            --hidden-import=albumentations \
+            --collect-all=insightface \
+            --collect-all=onnxruntime \
+            --collect-all=albumentations \
+            --collect-all=cv2 \
+            --exclude-module=tkinter \
+            --exclude-module=sympy \
+            --exclude-module=pyvirtualcam \
+            --noconfirm \
+            --osx-bundle-identifier=com.zero.echelon \
+            main.py
+
+      - name: Verify macOS build
+        run: |
+          if [ ! -d "dist/Echelon.app" ]; then
+            echo "ERROR: Echelon.app not found!"
+            ls dist/
+            exit 1
+          fi
+          du -sh dist/Echelon.app/
+          echo "macOS .app build: OK"
+
+      - name: Remove quarantine attribute (for unsigned app)
+        run: |
+          xattr -cr dist/Echelon.app || true
+          echo "Quarantine removed"
+
+      - name: Create .dmg installer
+        run: |
+          # Create a simple DMG with Applications symlink
+          mkdir -p dmg_staging
+          cp -r dist/Echelon.app dmg_staging/
+          ln -sf /Applications dmg_staging/Applications
+
+          # Create the DMG
+          hdiutil create \
+            -volname "Echelon" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO \
+            -imagekey zlib-level=9 \
+            Echelon-macOS.dmg
+
+          echo "DMG created:"
+          ls -lh Echelon-macOS.dmg
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-macOS
+          path: Echelon-macOS.dmg
+          retention-days: 90
+
+  # ═══════════════════════════════════════════
   # RELEASE — publish to GitHub Releases
   # ═══════════════════════════════════════════
   create-release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -248,6 +329,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: Echelon-Linux
+          path: release/
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Echelon-macOS
           path: release/
 
       - name: List release files
@@ -268,25 +355,39 @@ jobs:
             | Platform | File | How to Install |
             |---|---|---|
             | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
+            | 🍎 **macOS** | `Echelon-macOS.dmg` | Open DMG → drag Echelon to Applications |
             | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | `chmod +x Echelon-x86_64.AppImage` then double-click |
             | 🐧 **Ubuntu / Debian** | `echelon_2.1.0_amd64.deb` | `sudo dpkg -i echelon_2.1.0_amd64.deb` |
 
             ---
 
+            ## 🍎 macOS First Launch (unsigned app)
+            Since this app is not signed with an Apple Developer certificate, macOS may block it on first open.
+            **Fix:** Right-click (or Control+click) the app → click **Open** → click **Open** in the dialog.
+            You only need to do this once.
+
+            ---
+
+            ## 🎥 Virtual Camera Setup
+            - **Windows:** Install [OBS Studio](https://obsproject.com/) with Virtual Camera enabled
+            - **macOS:** Install [OBS Studio](https://obsproject.com/) with Virtual Camera — or use [CamTwist](http://camtwiststudio.com/)
+            - **Linux:** Run `sudo apt install v4l2loopback-dkms` (Echelon sets it up automatically)
+
+            ---
+
             ## 💾 Works Offline & via USB
             All builds are **100% self-contained** — copy to USB, install on any machine without internet.
-
-            *Note: AI models (~850MB) download automatically on first launch (one-time only).*
+            *AI models (~600 MB) download automatically on first launch (one-time only).*
 
             ---
 
             ## ⚙️ Requirements
-            - 8GB RAM minimum · Webcam required
-            - Linux: run `sudo apt install v4l2loopback-dkms` for virtual camera support
-            - Windows: Visual C++ 2015-2022 Runtime is installed automatically by the installer
+            - 8 GB RAM minimum · Webcam required
+            - macOS 12 (Monterey) or newer recommended
 
           files: |
             release/Echelon-Setup.exe
+            release/Echelon-macOS.dmg
             release/Echelon-x86_64.AppImage
             release/echelon_2.1.0_amd64.deb
           draft: false

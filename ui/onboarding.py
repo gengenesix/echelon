@@ -39,11 +39,18 @@ class OnboardingDialog(QDialog):
 
         layout.addSpacing(4)
 
-        # Virtual camera row (Linux only — skip on Windows)
+        # Virtual camera row — Linux needs v4l2loopback, macOS/Windows need OBS
+        IS_MAC = sys.platform == "darwin"
         if IS_LINUX:
             self._vcam_row = self._make_check_row(
                 "Virtual Camera Driver",
                 "Required for Zoom, Meet, Discord"
+            )
+            layout.addWidget(self._vcam_row["widget"])
+        elif IS_MAC:
+            self._vcam_row = self._make_check_row(
+                "Virtual Camera (OBS)",
+                "Install OBS Studio to use Echelon in video calls"
             )
             layout.addWidget(self._vcam_row["widget"])
         else:
@@ -117,25 +124,39 @@ class OnboardingDialog(QDialog):
         return {"widget": widget, "icon": icon, "desc": desc_lbl, "btn": btn}
 
     def run_all_checks(self):
-        if IS_LINUX and self._vcam_row:
+        if self._vcam_row:
             self._check_vcam()
         self._check_model()
         self._check_camera()
 
-    # ── Virtual Camera (Linux only) ──────────────────
+    # ── Virtual Camera ────────────────────────────────
     def _check_vcam(self):
-        ok = os.path.exists('/dev/video10')
         row = self._vcam_row
-        if ok:
-            self._set_row_ok(row, "Echelon Camera device ready")
-        else:
-            self._set_row_fail(row, "Not found — click Fix to install")
-            self._connect_btn(row["btn"], self._fix_vcam)
-            row["btn"].setText("Fix Now")
+        if IS_LINUX:
+            ok = os.path.exists('/dev/video10')
+            if ok:
+                self._set_row_ok(row, "Echelon Camera device ready ✓")
+            else:
+                self._set_row_fail(row, "Not found — click Fix to install v4l2loopback")
+                self._connect_btn(row["btn"], self._fix_vcam_linux)
+                row["btn"].setText("Fix Now")
+        elif sys.platform == "darwin":
+            # Check if OBS Virtual Camera is available
+            obs_paths = [
+                "/Applications/OBS.app",
+                "/Applications/OBS Studio.app",
+            ]
+            obs_ok = any(os.path.exists(p) for p in obs_paths)
+            if obs_ok:
+                self._set_row_ok(row, "OBS Studio found — enable Virtual Camera in OBS ✓")
+            else:
+                self._set_row_fail(row, "OBS Studio not found — needed for video calls")
+                self._connect_btn(row["btn"], self._open_obs_download)
+                row["btn"].setText("Download OBS")
         self._update_continue()
 
-    def _fix_vcam(self):
-        self._vcam_row["desc"].setText("Installing virtual camera...")
+    def _fix_vcam_linux(self):
+        self._vcam_row["desc"].setText("Loading v4l2loopback...")
         self._vcam_row["btn"].setEnabled(False)
         try:
             subprocess.run(
@@ -145,10 +166,17 @@ class OnboardingDialog(QDialog):
                 check=True, timeout=15
             )
         except Exception as e:
-            self._vcam_row["desc"].setText(f"Error: {e}. Try: sudo modprobe v4l2loopback")
+            self._vcam_row["desc"].setText(f"Error: {e}. Run manually: sudo modprobe v4l2loopback")
             self._vcam_row["btn"].setEnabled(True)
             return
         self._check_vcam()
+
+    def _open_obs_download(self):
+        import webbrowser
+        webbrowser.open("https://obsproject.com/download")
+        self._vcam_row["desc"].setText("Opening obsproject.com — install OBS, then restart Echelon")
+        self._vcam_row["btn"].setText("Retry Check")
+        self._connect_btn(self._vcam_row["btn"], self._check_vcam)
 
     # ── Model ────────────────────────────────────────
     def _models_ready(self) -> bool:
@@ -252,7 +280,8 @@ class OnboardingDialog(QDialog):
             vcam_ok = os.path.exists('/dev/video10')
             all_ok = vcam_ok and model_ok and cam_ok
         else:
-            # Windows: virtual camera not required (use OBS or similar)
+            # Windows/macOS: virtual camera not required to proceed
+            # (user can install OBS later — app still works for testing)
             all_ok = model_ok and cam_ok
 
         self._continue_btn.setEnabled(all_ok)

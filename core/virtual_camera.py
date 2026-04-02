@@ -6,7 +6,8 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 IS_WINDOWS = sys.platform == "win32"
-IS_LINUX = sys.platform.startswith("linux")
+IS_LINUX   = sys.platform.startswith("linux")
+IS_MAC     = sys.platform == "darwin"
 
 
 class VirtualCameraOutput:
@@ -58,10 +59,15 @@ class VirtualCameraOutput:
             return False
         except Exception as e:
             err_msg = str(e)
-            if IS_WINDOWS and ("obs" in err_msg.lower() or "virtual" in err_msg.lower() or "device" in err_msg.lower()):
+            if IS_WINDOWS:
                 logger.warning(
                     "Virtual camera unavailable on Windows. "
                     "Install OBS Studio with Virtual Camera enabled to use this feature."
+                )
+            elif IS_MAC:
+                logger.warning(
+                    "Virtual camera unavailable on macOS. "
+                    "Install OBS Studio (obsproject.com) and enable OBS Virtual Camera."
                 )
             elif IS_LINUX and "v4l2loopback" in err_msg.lower():
                 logger.warning(
