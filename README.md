@@ -2,7 +2,7 @@
 
 **Swap your face in real-time during any video call. Works with Zoom, Google Meet, Discord, WhatsApp, and Teams.**
 
-Created by **Zero** · v2.0.0
+Created by **Zero** · v2.1.0
 
 ---
 
@@ -14,7 +14,7 @@ Created by **Zero** · v2.0.0
 |---|---|---|
 | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → click Next → click Finish |
 | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | See Linux instructions below |
-| 🐧 **Ubuntu / Debian** | `echelon_2.0.0_amd64.deb` | See Linux instructions below |
+| 🐧 **Ubuntu / Debian** | `echelon_2.1.0_amd64.deb` | See Linux instructions below |
 
 ---
 
@@ -24,9 +24,9 @@ Created by **Zero** · v2.0.0
 2. Double-click the file
 3. Click **Next** → choose install folder → click **Install** → click **Finish**
 4. Echelon appears in your Start Menu and on your Desktop
-5. Launch it and follow the setup wizard
+5. Launch it and follow the setup wizard — AI models (~600 MB) download automatically on first run
 
-**To uninstall:** Go to Settings → Apps → search "Echelon" → Uninstall
+**To uninstall:** Settings → Apps → search "Echelon" → Uninstall
 
 ---
 
@@ -35,70 +35,98 @@ Created by **Zero** · v2.0.0
 ### Option A — AppImage (works on ANY Linux distro, no install needed)
 
 ```bash
-# Download Echelon-x86_64.AppImage from the releases page, then:
 chmod +x Echelon-x86_64.AppImage
 ./Echelon-x86_64.AppImage
 ```
 
-Or right-click the file → Properties → tick "Allow executing as program" → double-click to run.
+Or right-click → Properties → tick "Allow executing as program" → double-click.
 
 ### Option B — .deb package (Ubuntu, Debian, Linux Mint)
 
 ```bash
-sudo dpkg -i echelon_2.0.0_amd64.deb
-# Then launch from your app menu or type: echelon
+sudo dpkg -i echelon_2.1.0_amd64.deb
+echelon   # launch from terminal, or find it in your apps menu
 ```
 
-### Virtual Camera Setup (Linux only)
+### Virtual Camera Setup (Linux — required for video calls)
 
-For Echelon to appear as a camera in Zoom/Meet/etc, install v4l2loopback:
+Echelon needs a virtual camera driver to appear in Zoom/Meet/Discord:
 
 ```bash
+# Install the driver (one-time)
 sudo apt install v4l2loopback-dkms   # Ubuntu/Debian
 # OR
-sudo dnf install v4l2loopback        # Fedora
+sudo dnf install v4l2loopback        # Fedora/RHEL
+
+# Load it now
+sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="Echelon Camera" exclusive_caps=1
+
+# Make it load automatically on every boot
+echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf
+echo 'options v4l2loopback devices=1 video_nr=10 card_label="Echelon Camera" exclusive_caps=1' | sudo tee /etc/modprobe.d/v4l2loopback.conf
 ```
 
-This is a one-time setup. Echelon will detect it automatically.
+The `run.sh` launcher tries to load v4l2loopback automatically if not already loaded.
+
+---
+
+## 🆕 What's New in v2.1.0
+
+- ✅ **Drag & drop** — drag a photo directly onto the upload zone
+- ✅ **Instant face upload** — detector loaded once, cached for all subsequent uploads (~instant vs 3-5s before)
+- ✅ **Faster detection** — 320×320 detection size (3× faster on CPU)
+- ✅ **Better model downloads** — 4-5 mirror fallback per file, size validation, zip fallback, retries
+- ✅ **Auto v4l2 setup** — `run.sh` tries to load virtual camera driver automatically
+- ✅ **Loading indicator** — clear feedback while face detection runs
+- ✅ **Fixed silent failures** — upload button no longer stays disabled after errors
+- ✅ **ORT optimizations** — full graph optimization, tuned thread counts
+
+---
+
+## 🤔 First Launch — AI Models
+
+On first launch, Echelon downloads two AI models (~600 MB total, one-time only):
+
+| Model | Size | Purpose |
+|---|---|---|
+| `inswapper_128.onnx` | ~554 MB | Face swap engine |
+| `buffalo_l` (5 files) | ~46 MB | Face detection |
+
+These download automatically via the setup wizard. If download fails, the wizard shows a retry button and fallback instructions.
+
+**Manual download (if automatic fails):**
+- `inswapper_128.onnx`: https://github.com/facefusion/facefusion-assets/releases/tag/models
+- `buffalo_l`: Run `python -c "import insightface; insightface.app.FaceAnalysis(name='buffalo_l').prepare(ctx_id=-1)"`
+
+Place `inswapper_128.onnx` in your Echelon `models/` folder.
 
 ---
 
 ## 💾 USB Drive / Offline Install
 
-All builds are **100% self-contained**. No internet required after download.
+All builds are **100% self-contained** after first model download.
 
-1. Download the installer file on any machine with internet
-2. Copy it to a USB drive
-3. Plug the USB into the target machine
-4. Run the installer — everything works offline
+1. Download the installer on any machine with internet
+2. Copy to a USB drive
+3. Install on the target machine — models still need internet on first run
 
 ---
 
-## 🔄 How to Build New Installers (for developers)
+## 🔄 Building New Releases (developers)
 
-Building is fully automated. Every time you push a new version tag, GitHub automatically builds fresh installers for Windows and Linux.
-
-### To release a new version:
+Building is fully automated via GitHub Actions.
 
 ```bash
-# 1. Make your changes to the code
-# 2. Commit them
-git add -A
-git commit -m "Your changes"
-
-# 3. Tag the new version
-git tag -a v2.1.0 -m "Echelon v2.1.0"
-
-# 4. Push — this triggers the build automatically
+# Make changes, commit, then tag and push:
+git add -A && git commit -m "your changes"
+git tag v2.2.0
 git push origin master
-git push origin v2.1.0
+git push origin v2.2.0
 ```
 
-GitHub then builds `Echelon-Setup.exe` and `Echelon-x86_64.AppImage` on real Windows and Linux servers, and publishes them to the [Releases page](https://github.com/gengenesix/echelon/releases) automatically. Takes ~25 minutes.
+GitHub builds Windows `.exe` + Linux `.AppImage` + `.deb` automatically in ~25 minutes and publishes to [Releases](https://github.com/gengenesix/echelon/releases).
 
-### To trigger a build without a new version (for testing):
-
-Go to [Actions → Build Echelon](https://github.com/gengenesix/echelon/actions/workflows/build.yml) → click **Run workflow** → click **Run workflow** (green button).
+To trigger manually: [Actions → Build Echelon → Run workflow](https://github.com/gengenesix/echelon/actions/workflows/build.yml)
 
 ---
 
@@ -107,23 +135,24 @@ Go to [Actions → Build Echelon](https://github.com/gengenesix/echelon/actions/
 | | Minimum | Recommended |
 |---|---|---|
 | RAM | 8 GB | 16 GB |
-| CPU | Intel i5 (8th gen+) or equivalent | Intel i7 / AMD Ryzen 7 |
-| GPU | Not required | Any (CUDA boosts speed) |
-| Webcam | Required | HD (1080p) |
+| CPU | Intel i5 (8th gen+) | Intel i7 / AMD Ryzen 7 |
+| GPU | Not required | CUDA GPU (boosts FPS) |
+| Webcam | Required | HD 1080p |
 | OS | Windows 10+, Ubuntu 20.04+, Debian 11+ | Latest |
 
 ---
 
 ## 🔧 Features
 
-- ⚡ Real-time face swap at 15-30 FPS (CPU only)
-- 👤 Face gallery — save multiple faces, switch with one click
-- 🎭 Multi-face support — swap specific people in group calls  
+- ⚡ Real-time face swap at 15-30 FPS (CPU only, no GPU needed)
+- 🖱️ Drag & drop photo upload
+- 👤 Face gallery — save multiple faces, switch instantly
+- 🎭 Multi-face mode — swap specific people in group calls
 - 🌫️ Background blur
 - 🎛️ Performance modes: Speed / Balanced / Quality
-- 💾 Preset profiles — save your favourite setups
-- ⌨️ Hotkeys: `Space` toggle, `F1` mode, `Esc` minimize
-- 🔄 Auto performance tuner for your hardware
+- 💾 Preset profiles
+- ⌨️ Hotkeys: `Space` toggle, `F1` cycle mode, `Esc` minimize
+- 🔄 Auto performance tuner
 
 ---
 
@@ -132,14 +161,15 @@ Go to [Actions → Build Echelon](https://github.com/gengenesix/echelon/actions/
 ```
 echelon/
 ├── main.py                 # Entry point
-├── ui/                     # PyQt6 UI components
-├── core/                   # Face detection, pipeline, inference
+├── run.sh                  # Linux launcher (auto-sets up virtual camera)
+├── ui/                     # PyQt6 UI (main window, face panel, onboarding)
+├── core/                   # Face detection, pipeline, inference engine
 ├── config/                 # Settings management
-├── assets/                 # Icons, styles
-├── models/                 # AI model downloader
-└── .github/workflows/      # CI/CD build pipeline
+├── assets/                 # Icons, stylesheets
+├── models/                 # AI model downloader with mirror fallback
+└── .github/workflows/      # CI/CD — auto-builds on every tag
 ```
 
 ---
 
-*Built with ❤️ by Zero · [GitHub](https://github.com/gengenesix/echelon)*
+*Built by Zero · [Releases](https://github.com/gengenesix/echelon/releases) · [Actions](https://github.com/gengenesix/echelon/actions)*
