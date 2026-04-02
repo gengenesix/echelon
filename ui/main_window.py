@@ -29,7 +29,7 @@ class FaceLoadThread(QThread):
     face_loaded = pyqtSignal(object, str)  # DetectedFace, path
     face_failed = pyqtSignal(str)
 
-    TIMEOUT_MS = 20000  # 20 seconds max
+    TIMEOUT_MS = 45000  # 45 seconds max (model load on slow CPU can take 30s)
 
     def __init__(self, image_path: str, models_dir: str, providers: list, parent=None):
         super().__init__(parent)
@@ -48,8 +48,8 @@ class FaceLoadThread(QThread):
                 detector = get_global_detector(self.models_dir, self.providers)
                 if not detector.is_loaded:
                     result["error"] = (
-                        "Could not load face detector.\n"
-                        "Make sure models downloaded correctly on first launch."
+                        "Could not load face detector — models may be missing or corrupt.\n"
+                        "Try: Settings → Check Models, or restart the app."
                     )
                     result["done"] = True
                     return
@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(name_lbl)
 
         layout.addSpacing(8)
-        ver_lbl = QLabel("v2.0")
+        ver_lbl = QLabel("v2.1")
         ver_lbl.setStyleSheet(
             "color: #50516A; font-size: 11px; background: transparent; padding-top: 4px;"
         )

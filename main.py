@@ -67,7 +67,7 @@ def _make_splash(app):
     font2 = QFont()
     font2.setPointSize(11)
     painter.setFont(font2)
-    painter.drawText(0, 245, 300, 30, Qt.AlignmentFlag.AlignCenter, "by Zero  ·  v2.0")
+    painter.drawText(0, 245, 300, 30, Qt.AlignmentFlag.AlignCenter, "by Zero  ·  v2.1")
 
     painter.setPen(QColor("#5C5FFF"))
     font3 = QFont()

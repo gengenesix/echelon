@@ -26,7 +26,8 @@ _global_providers: list = []
 
 
 def get_global_detector(models_dir: str, providers: list) -> "FaceDetector":
-    """Return the cached global detector, loading it only on first call."""
+    """Return the cached global detector, loading it only on first call.
+    Retries up to 2 times if loading fails."""
     global _global_detector, _global_models_dir, _global_providers
     if (
         _global_detector is not None
@@ -35,12 +36,20 @@ def get_global_detector(models_dir: str, providers: list) -> "FaceDetector":
         and _global_providers == providers
     ):
         return _global_detector
-    det = FaceDetector(models_dir, providers)
-    if det.load():
-        _global_detector = det
-        _global_models_dir = models_dir
-        _global_providers = list(providers)
-    return det
+
+    # Try loading up to 2 times (insightface can fail intermittently)
+    for attempt in range(2):
+        det = FaceDetector(models_dir, providers)
+        if det.load():
+            _global_detector = det
+            _global_models_dir = models_dir
+            _global_providers = list(providers)
+            logger.info(f"Global detector ready (attempt {attempt+1})")
+            return det
+        logger.warning(f"Detector load attempt {attempt+1} failed, retrying...")
+
+    logger.error(f"All detector load attempts failed for models_dir={models_dir}")
+    return det  # Return failed detector so caller can check is_loaded
 
 
 class FaceDetector:
