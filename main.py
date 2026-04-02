@@ -14,10 +14,20 @@ import logging
 from pathlib import Path
 
 # ── Speed up startup: disable slow network checks before ANY imports ──
-os.environ.setdefault("ALBUMENTATIONS_DISABLE_VERSION_CHECK", "1")
+os.environ["ALBUMENTATIONS_DISABLE_VERSION_CHECK"] = "1"
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 os.environ.setdefault("MPLCONFIGDIR", str(Path.home() / ".cache" / "matplotlib"))
 os.environ["MPLBACKEND"] = "Agg"  # force headless matplotlib (insightface uses it)
-os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+# Prevent ONNX/numpy from over-subscribing CPU threads
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+import logging as _logging
+_logging.getLogger("insightface").setLevel(_logging.ERROR)
+_logging.getLogger("onnxruntime").setLevel(_logging.ERROR)
 
 from PyQt6.QtWidgets import QApplication, QSplashScreen, QLabel
 from PyQt6.QtCore import Qt, QTimer

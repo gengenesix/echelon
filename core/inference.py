@@ -43,8 +43,11 @@ class FaceSwapEngine:
         try:
             t0 = time.time()
             opts = ort.SessionOptions()
-            opts.inter_op_num_threads = 4
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            opts.inter_op_num_threads = 2
             opts.intra_op_num_threads = 4
+            opts.enable_mem_pattern = True
+            opts.enable_cpu_mem_arena = True
             self.session = ort.InferenceSession(
                 self.model_path, sess_options=opts, providers=self.providers
             )
