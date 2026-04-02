@@ -152,28 +152,26 @@ class OnboardingDialog(QDialog):
 
     # ── Model ────────────────────────────────────────
     def _models_ready(self) -> bool:
-        """Check that BOTH inswapper AND buffalo_l detection models exist."""
-        models_path = Path(self.config.models_dir)
-        inswapper_ok = (models_path / "inswapper_128.onnx").exists()
-        buffalo_path = models_path / "models" / "buffalo_l"
-        buffalo_ok = buffalo_path.exists() and len(list(buffalo_path.glob("*.onnx"))) >= 3
-        return inswapper_ok and buffalo_ok
+        """Check that BOTH inswapper AND buffalo_l detection models exist and are valid size."""
+        from models.downloader import ModelDownloader
+        dl = ModelDownloader(self.config.models_dir)
+        return dl._inswapper_ok() and dl._buffalo_ok()
 
     def _check_model(self):
+        from models.downloader import ModelDownloader
         row = self._model_row
         if self._models_ready():
-            self._set_row_ok(row, "All AI models ready (face swap + detection)")
+            self._set_row_ok(row, "All AI models ready (face swap + detection) ✓")
         else:
-            models_path = Path(self.config.models_dir)
-            inswapper_ok = (models_path / "inswapper_128.onnx").exists()
-            buffalo_path = models_path / "models" / "buffalo_l"
-            buffalo_ok = buffalo_path.exists() and len(list(buffalo_path.glob("*.onnx"))) >= 3
+            dl = ModelDownloader(self.config.models_dir)
+            inswapper_ok = dl._inswapper_ok()
+            buffalo_ok = dl._buffalo_ok()
             if not inswapper_ok and not buffalo_ok:
-                desc = "Face swap + detection models needed (~600 MB total, one-time)"
+                desc = "Models needed: inswapper_128.onnx + buffalo_l (~600 MB, one-time download)"
             elif not inswapper_ok:
-                desc = "Face swap model needed: inswapper_128.onnx (~554 MB)"
+                desc = "Missing: inswapper_128.onnx (~554 MB face swap model)"
             else:
-                desc = "Face detection models needed: buffalo_l (~46 MB)"
+                desc = "Missing or incomplete: buffalo_l detection models (~46 MB)"
             self._set_row_fail(row, desc)
             self._connect_btn(row["btn"], self._download_model)
             row["btn"].setText("Download All")
@@ -200,9 +198,13 @@ class OnboardingDialog(QDialog):
 
     def _on_dl_failed(self, name: str, error: str):
         self._progress.setVisible(False)
-        self._model_row["desc"].setText(f"Failed: {error}")
+        short_error = error.split('\n')[0]  # Show first line only in UI
+        self._model_row["desc"].setText(f"Download failed: {short_error}  —  Check internet & retry")
         self._model_row["btn"].setEnabled(True)
         self._model_row["btn"].setText("Retry")
+        self._status_lbl.setText(
+            "💡 Tip: If download keeps failing, see README for manual install instructions."
+        )
 
     # ── Webcam ───────────────────────────────────────
     def _check_camera(self):
