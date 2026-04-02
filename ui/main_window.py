@@ -9,7 +9,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut, QPixmap, QIcon
 from config.manager import AppConfig, ConfigManager
 from core.hardware import HardwareInfo
 from utils.resource_path import resource_path
-from core.face_detector import FaceDetector, DetectedFace
+from core.face_detector import FaceDetector, DetectedFace, get_global_detector
 from core.capture import CameraCapture
 from core.pipeline import EchelonPipeline
 from core.face_gallery import FaceGallery
@@ -44,8 +44,9 @@ class FaceLoadThread(QThread):
 
         def _detect():
             try:
-                detector = FaceDetector(self.models_dir, self.providers)
-                if not detector.load():
+                # Use global singleton — avoids 3-5s reload on every upload
+                detector = get_global_detector(self.models_dir, self.providers)
+                if not detector.is_loaded:
                     result["error"] = (
                         "Could not load face detector.\n"
                         "Make sure models downloaded correctly on first launch."
@@ -317,13 +318,13 @@ class MainWindow(QMainWindow):
 
     def _on_face_selected(self, path: str):
         if self._face_thread and self._face_thread.isRunning():
-            return
+            self._face_thread.quit()
+            self._face_thread.wait(500)
         self._face_thread = FaceLoadThread(path, self.config.models_dir, self.hw_info.onnx_providers)
         self._face_thread.face_loaded.connect(self._on_face_loaded)
         self._face_thread.face_failed.connect(self._on_face_failed)
         self._face_thread.start()
-        self.face_panel._status_label.setText("Detecting face...")
-        self.face_panel._status_label.setStyleSheet("color: #FFB547; font-size: 12px;")
+        self.face_panel.show_loading("Detecting face...")
 
     def _on_face_loaded(self, face: DetectedFace, path: str):
         self._source_face = face

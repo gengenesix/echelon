@@ -2,19 +2,52 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QFileDialog, QComboBox, QFrame,
                               QInputDialog)
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent
 import cv2
 from ui.widgets import SectionCard
 
 _GALLERY_PLACEHOLDER = "— select saved face —"
+_ACCEPTED_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.bmp')
 
 
 class _ClickableFrame(QFrame):
     clicked = pyqtSignal()
+    file_dropped = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
 
     def mousePressEvent(self, event):
         self.clicked.emit()
         super().mousePressEvent(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls and urls[0].toLocalFile().lower().endswith(_ACCEPTED_EXTS):
+                event.acceptProposedAction()
+                self.setStyleSheet(
+                    "QFrame#dropZone { background: #0D0E1A; "
+                    "border: 1.5px solid #5C5FFF; border-radius: 10px; }"
+                )
+                return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet("")
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        self.setStyleSheet("")
+        urls = event.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            if path.lower().endswith(_ACCEPTED_EXTS):
+                self.file_dropped.emit(path)
+                event.acceptProposedAction()
+                return
+        event.ignore()
 
 
 class FacePanel(QWidget):
@@ -35,12 +68,13 @@ class FacePanel(QWidget):
         # ── Source Face Section ──
         face_card = SectionCard("Source Face")
 
-        # Drop zone (clickable)
+        # Drop zone — clickable AND drag-droppable
         self._drop_zone = _ClickableFrame()
         self._drop_zone.setObjectName("dropZone")
         self._drop_zone.setFixedHeight(130)
         self._drop_zone.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drop_zone.clicked.connect(self._on_upload_clicked)
+        self._drop_zone.file_dropped.connect(self.face_selected)
 
         drop_layout = QVBoxLayout(self._drop_zone)
         drop_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -127,9 +161,21 @@ class FacePanel(QWidget):
         if ok and name.strip():
             self.gallery_save_requested.emit(name.strip())
 
-    # ── public methods called by MainWindow ─────────────────────────────────
+    # ── Public methods called by MainWindow ───────────────────────────────────
+
+    def show_loading(self, message: str = "Detecting face..."):
+        """Show a loading/in-progress state while face detection runs."""
+        self._status_label.setText(message)
+        self._status_label.setStyleSheet("color: #FFB547; font-size: 11px;")
+        self._upload_btn.setEnabled(False)
+        self._drop_zone.setStyleSheet(
+            "QFrame#dropZone { background: #0D0E1A; "
+            "border: 1.5px dashed #FFB547; border-radius: 10px; }"
+        )
 
     def show_face_preview(self, image_path: str):
+        """Display the detected face thumbnail and mark success."""
+        self._upload_btn.setEnabled(True)
         img = cv2.imread(image_path)
         if img is None:
             self.show_error("Cannot load image")
@@ -140,29 +186,32 @@ class FacePanel(QWidget):
         x = (w - size) // 2
         img = img[y:y + size, x:x + size]
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (110, 110))
+        img = cv2.resize(img, (110, 110), interpolation=cv2.INTER_AREA)
         qimg = QImage(img.data, 110, 110, 3 * 110, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
-        # Hide placeholder, show image
         self._drop_icon.hide()
         self._drop_hint.hide()
         self._img_label.setPixmap(pixmap)
         self._img_label.show()
         self._drop_zone.setStyleSheet(
-            "QFrame#dropZone { background: #0D0E1A; border: 1.5px solid #22D98F; border-radius: 10px; }"
+            "QFrame#dropZone { background: #0D0E1A; "
+            "border: 1.5px solid #22D98F; border-radius: 10px; }"
         )
         self._status_label.setText("✓ Face detected")
         self._status_label.setStyleSheet("color: #22D98F; font-size: 11px;")
         self._save_btn.setEnabled(True)
 
     def show_error(self, message: str):
+        """Show error state after failed detection."""
+        self._upload_btn.setEnabled(True)
         self._status_label.setText(f"✗ {message}")
         self._status_label.setStyleSheet("color: #FF4D7A; font-size: 11px;")
         self._img_label.hide()
         self._drop_icon.show()
         self._drop_hint.show()
         self._drop_zone.setStyleSheet(
-            "QFrame#dropZone { background: #0D0E1A; border: 1.5px dashed #FF4D7A; border-radius: 10px; }"
+            "QFrame#dropZone { background: #0D0E1A; "
+            "border: 1.5px dashed #FF4D7A; border-radius: 10px; }"
         )
         self._save_btn.setEnabled(False)
 

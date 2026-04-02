@@ -1,5 +1,5 @@
 {
-  "performance_mode": "balanced",
+  "performance_mode": "quality",
   "camera_device_id": 0,
   "virtual_camera_device": "/dev/video10",
   "output_width": 1280,
@@ -19,7 +19,7 @@
   "frame_skip": 1,
   "face_detect_interval": 5,
   "auto_tune": false,
-  "bg_blur": "off",
+  "bg_blur": "heavy",
   "target_face_mode": "smallest",
   "presets": []
 }
