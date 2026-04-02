@@ -215,7 +215,7 @@ jobs:
       - name: Verify outputs
         run: |
           echo "=== Build outputs ==="
-          ls -lh Echelon-x86_64.AppImage echelon_2.0.0_amd64.deb
+          ls -lh Echelon-x86_64.AppImage echelon_2.1.0_amd64.deb
           file Echelon-x86_64.AppImage
           echo "All outputs verified OK"
 
@@ -225,7 +225,7 @@ jobs:
           name: Echelon-Linux
           path: |
             Echelon-x86_64.AppImage
-            echelon_2.0.0_amd64.deb
+            echelon_2.1.0_amd64.deb
           retention-days: 90
 
   # ═══════════════════════════════════════════
@@ -269,7 +269,7 @@ jobs:
             |---|---|---|
             | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
             | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | `chmod +x Echelon-x86_64.AppImage` then double-click |
-            | 🐧 **Ubuntu / Debian** | `echelon_2.0.0_amd64.deb` | `sudo dpkg -i echelon_2.0.0_amd64.deb` |
+            | 🐧 **Ubuntu / Debian** | `echelon_2.1.0_amd64.deb` | `sudo dpkg -i echelon_2.1.0_amd64.deb` |
 
             ---
 
@@ -288,7 +288,7 @@ jobs:
           files: |
             release/Echelon-Setup.exe
             release/Echelon-x86_64.AppImage
-            release/echelon_2.0.0_amd64.deb
+            release/echelon_2.1.0_amd64.deb
           draft: false
           prerelease: false
           fail_on_unmatched_files: false

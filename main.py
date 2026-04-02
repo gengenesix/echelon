@@ -80,7 +80,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Echelon")
-    app.setApplicationVersion("2.0.0")
+    app.setApplicationVersion("2.1.0")
     app.setOrganizationName("Echelon")
 
     # Show splash IMMEDIATELY so user sees the app opened
