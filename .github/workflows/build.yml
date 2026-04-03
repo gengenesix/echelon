@@ -61,14 +61,20 @@ jobs:
           Write-Host "Echelon.exe: OK"
 
       - name: Install NSIS
-        shell: cmd
+        shell: powershell
         run: |
-          choco install nsis --yes --no-progress
-          if not exist "C:\Program Files (x86)\NSIS\makensis.exe" (
-            echo NSIS not found after install
-            exit /b 1
-          )
-          echo NSIS installed OK
+          # Download NSIS directly (Chocolatey is unreliable on GitHub runners)
+          $url = "https://sourceforge.net/projects/nsis/files/NSIS%203/3.10/nsis-3.10-setup.exe/download"
+          $out = "$env:TEMP\nsis-setup.exe"
+          Write-Host "Downloading NSIS..."
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Write-Host "Installing NSIS silently..."
+          Start-Process -FilePath $out -ArgumentList "/S" -Wait
+          if (!(Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            Write-Error "NSIS install failed"
+            exit 1
+          }
+          Write-Host "NSIS installed OK"
 
       - name: Build NSIS installer
         shell: cmd
