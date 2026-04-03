@@ -1,13 +1,18 @@
 import sys
+import os
 import subprocess
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QCheckBox, QComboBox, QLineEdit,
                               QGroupBox, QFormLayout, QSlider, QMessageBox,
-                              QInputDialog, QScrollArea, QWidget, QSizePolicy,
-                              QFrame)
+                              QScrollArea, QWidget, QSizePolicy, QFrame,
+                              QProgressBar, QFileDialog)
 from PyQt6.QtCore import Qt
 from config.manager import AppConfig, BASE_DIR
+
+IS_LINUX   = sys.platform.startswith("linux")
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC     = sys.platform == "darwin"
 
 
 def _grp_style():
@@ -19,7 +24,6 @@ def _grp_style():
 
 
 def _make_slider_row(mn, mx, default):
-    """Returns (layout, slider, value_label)."""
     row = QHBoxLayout()
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setRange(mn, mx)
@@ -37,150 +41,343 @@ class SettingsDialog(QDialog):
     def __init__(self, config: AppConfig, parent=None):
         super().__init__(parent)
         self.config = config
+        self._downloader = None
         self.setWindowTitle("Settings")
-        self.setMinimumSize(520, 600)
-        self.resize(520, 740)
+        self.setMinimumSize(520, 640)
+        self.resize(520, 800)
         self._setup_ui()
         self.load_from_config(config)
 
     def _setup_ui(self):
-        # Outer layout: scroll area + fixed button row
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Scroll area for all settings content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
         scroll_widget = QWidget()
         scroll_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(scroll_widget)
         layout.setContentsMargins(24, 24, 24, 12)
         layout.setSpacing(16)
-
         scroll.setWidget(scroll_widget)
         outer.addWidget(scroll, 1)
 
-        # ── General ─────────────────────────────────────────────────────────
+        # ── General ──────────────────────────────────────────────────────────
         gen = QGroupBox("General")
         gen.setStyleSheet(_grp_style())
         gen_layout = QFormLayout(gen)
         gen_layout.setSpacing(10)
-        self._login_cb = QCheckBox()
+        self._login_cb    = QCheckBox()
         self._minimized_cb = QCheckBox()
-        self._perf_combo = QComboBox()
+        self._perf_combo  = QComboBox()
         self._perf_combo.addItems(["quality", "balanced", "speed"])
         gen_layout.addRow("Launch on login:", self._login_cb)
         gen_layout.addRow("Start minimized:", self._minimized_cb)
-        gen_layout.addRow("Default mode:", self._perf_combo)
+        gen_layout.addRow("Default mode:",    self._perf_combo)
         layout.addWidget(gen)
+
+        # ── Camera ───────────────────────────────────────────────────────────
+        cam = QGroupBox("Camera")
+        cam.setStyleSheet(_grp_style())
+        cam_layout = QFormLayout(cam)
+        cam_layout.setSpacing(10)
+        self._res_combo = QComboBox()
+        self._res_combo.addItems(["1280x720", "1920x1080", "640x480"])
+        self._fps_combo = QComboBox()
+        self._fps_combo.addItems(["30", "25", "20", "15"])
+        cam_layout.addRow("Output resolution:", self._res_combo)
+        cam_layout.addRow("Output FPS:",        self._fps_combo)
+        layout.addWidget(cam)
 
         # ── Performance ──────────────────────────────────────────────────────
         perf = QGroupBox("Performance")
         perf.setStyleSheet(_grp_style())
         perf_layout = QFormLayout(perf)
-        perf_layout.setSpacing(12)
-        perf_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        skip_row, self._skip_slider, self._skip_val_lbl = _make_slider_row(0, 3, 1)
-        perf_layout.addRow("Frame skip (0 = off):", skip_row)
-
-        det_row, self._det_slider, self._det_val_lbl = _make_slider_row(1, 10, 5)
-        perf_layout.addRow("Detect every N frames:", det_row)
-
-        self._res_combo = QComboBox()
-        self._res_combo.setMinimumHeight(32)
-        self._res_combo.addItems(["480p (Speed)", "640p (Balanced)", "720p (Quality)"])
-        perf_layout.addRow("Processing resolution:", self._res_combo)
-
-        self._autotune_cb = QCheckBox("Auto-tune to maintain ~15 FPS")
-        self._autotune_cb.setMinimumHeight(28)
-        perf_layout.addRow("", self._autotune_cb)
-
-        opt_btn = QPushButton("⚡  Optimize for My Hardware")
-        opt_btn.setMinimumHeight(34)
-        opt_btn.clicked.connect(self._on_optimize)
-        perf_layout.addRow("", opt_btn)
-
+        perf_layout.setSpacing(10)
+        self._auto_tune_cb = QCheckBox()
+        skip_row, self._skip_slider, self._skip_lbl = _make_slider_row(0, 4, 1)
+        det_row,  self._det_slider,  self._det_lbl  = _make_slider_row(1, 10, 5)
+        perf_layout.addRow("Auto-tune performance:", self._auto_tune_cb)
+        perf_layout.addRow("Frame skip:",            skip_row)
+        perf_layout.addRow("Face detect interval:",  det_row)
         layout.addWidget(perf)
 
-        # ── Advanced ────────────────────────────────────────────────────────
-        adv = QGroupBox("Advanced")
-        adv.setStyleSheet(_grp_style())
-        adv_layout = QFormLayout(adv)
-        adv_layout.setSpacing(10)
-        self._vcam_edit = QLineEdit()
-        self._loglevel_combo = QComboBox()
-        self._loglevel_combo.addItems(["INFO", "DEBUG", "WARNING"])
-        open_log_btn = QPushButton("Open Log File")
-        open_log_btn.clicked.connect(self._open_log)
-        adv_layout.addRow("Virtual camera:", self._vcam_edit)
-        adv_layout.addRow("Log level:", self._loglevel_combo)
-        adv_layout.addRow("", open_log_btn)
-        layout.addWidget(adv)
+        # ── AI Models ────────────────────────────────────────────────────────
+        mdl = QGroupBox("AI Models")
+        mdl.setStyleSheet(_grp_style())
+        mdl_layout = QVBoxLayout(mdl)
+        mdl_layout.setSpacing(10)
 
-        # ── Presets ───────────────────────────────────────────────────────────
-        presets_grp = QGroupBox("Presets")
-        presets_grp.setStyleSheet(_grp_style())
-        presets_layout = QVBoxLayout(presets_grp)
-        presets_layout.setSpacing(8)
-        self._presets_combo = QComboBox()
-        presets_layout.addWidget(self._presets_combo)
-        preset_btn_row = QHBoxLayout()
-        save_preset_btn = QPushButton("Save Current")
-        save_preset_btn.clicked.connect(self._on_save_preset)
-        load_preset_btn = QPushButton("Load")
-        load_preset_btn.clicked.connect(self._on_load_preset)
-        del_preset_btn = QPushButton("Delete")
-        del_preset_btn.clicked.connect(self._on_delete_preset)
-        preset_btn_row.addWidget(save_preset_btn)
-        preset_btn_row.addWidget(load_preset_btn)
-        preset_btn_row.addWidget(del_preset_btn)
-        presets_layout.addLayout(preset_btn_row)
-        layout.addWidget(presets_grp)
+        # Status row
+        self._model_status_lbl = QLabel("Checking models…")
+        self._model_status_lbl.setStyleSheet("color: #8888A0; font-size: 12px;")
+        self._model_status_lbl.setWordWrap(True)
+        mdl_layout.addWidget(self._model_status_lbl)
 
-        # ── About ────────────────────────────────────────────────────────────
-        about = QGroupBox("About")
-        about.setStyleSheet(_grp_style())
-        about_layout = QVBoxLayout(about)
-        about_layout.addWidget(QLabel("Echelon v2.0"))
-        about_layout.addWidget(QLabel("Created by Zero"))
-        about_layout.addWidget(QLabel("Built with FaceFusion engine"))
-        about_layout.addWidget(QLabel("© 2026 Zero. All rights reserved."))
-        update_btn = QPushButton("Check for Updates")
-        update_btn.clicked.connect(self._on_check_updates)
-        about_layout.addWidget(update_btn)
-        layout.addWidget(about)
+        # Progress bar (hidden unless downloading)
+        self._dl_progress = QProgressBar()
+        self._dl_progress.setFixedHeight(6)
+        self._dl_progress.setVisible(False)
+        mdl_layout.addWidget(self._dl_progress)
+
+        self._dl_msg_lbl = QLabel("")
+        self._dl_msg_lbl.setStyleSheet("color: #6B7094; font-size: 11px;")
+        self._dl_msg_lbl.setWordWrap(True)
+        self._dl_msg_lbl.setVisible(False)
+        mdl_layout.addWidget(self._dl_msg_lbl)
+
+        # Buttons row
+        btn_row = QHBoxLayout()
+        self._dl_btn = QPushButton("Download Models")
+        self._dl_btn.clicked.connect(self._start_download)
+        btn_row.addWidget(self._dl_btn)
+
+        self._stop_dl_btn = QPushButton("Stop")
+        self._stop_dl_btn.setVisible(False)
+        self._stop_dl_btn.clicked.connect(self._stop_download)
+        btn_row.addWidget(self._stop_dl_btn)
+
+        btn_row.addStretch()
+        mdl_layout.addLayout(btn_row)
+
+        # ── Manual install section ────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #2A2A35;")
+        mdl_layout.addWidget(sep)
+
+        manual_title = QLabel("Manual Install")
+        manual_title.setStyleSheet("color: #E8E9F0; font-weight: 600; font-size: 12px;")
+        mdl_layout.addWidget(manual_title)
+
+        manual_desc = QLabel(
+            "If automatic download fails, you can place the model files manually.\n"
+            "Click a button below to browse for the file on your computer."
+        )
+        manual_desc.setStyleSheet("color: #6B7094; font-size: 11px;")
+        manual_desc.setWordWrap(True)
+        mdl_layout.addWidget(manual_desc)
+
+        # inswapper browse
+        inswapper_row = QHBoxLayout()
+        inswapper_lbl = QLabel("inswapper_128.onnx  (~554 MB):")
+        inswapper_lbl.setStyleSheet("color: #C0C0D0; font-size: 11px;")
+        self._inswapper_status = QLabel("❓")
+        self._inswapper_status.setFixedWidth(20)
+        browse_inswapper = QPushButton("Browse…")
+        browse_inswapper.setFixedWidth(90)
+        browse_inswapper.clicked.connect(self._browse_inswapper)
+        inswapper_row.addWidget(self._inswapper_status)
+        inswapper_row.addWidget(inswapper_lbl, 1)
+        inswapper_row.addWidget(browse_inswapper)
+        mdl_layout.addLayout(inswapper_row)
+
+        # buffalo_l browse
+        buffalo_row = QHBoxLayout()
+        buffalo_lbl = QLabel("buffalo_l folder  (5 .onnx files, ~330 MB):")
+        buffalo_lbl.setStyleSheet("color: #C0C0D0; font-size: 11px;")
+        self._buffalo_status = QLabel("❓")
+        self._buffalo_status.setFixedWidth(20)
+        browse_buffalo = QPushButton("Browse…")
+        browse_buffalo.setFixedWidth(90)
+        browse_buffalo.clicked.connect(self._browse_buffalo_folder)
+        buffalo_row.addWidget(self._buffalo_status)
+        buffalo_row.addWidget(buffalo_lbl, 1)
+        buffalo_row.addWidget(browse_buffalo)
+        mdl_layout.addLayout(buffalo_row)
+
+        # Models folder label
+        self._models_dir_lbl = QLabel("")
+        self._models_dir_lbl.setStyleSheet("color: #50516A; font-size: 10px;")
+        self._models_dir_lbl.setWordWrap(True)
+        mdl_layout.addWidget(self._models_dir_lbl)
+
+        layout.addWidget(mdl)
+
+        # ── Virtual Camera ───────────────────────────────────────────────────
+        if IS_LINUX:
+            vcam = QGroupBox("Virtual Camera (Linux)")
+            vcam.setStyleSheet(_grp_style())
+            vcam_layout = QVBoxLayout(vcam)
+            self._vcam_status_lbl = QLabel("Checking…")
+            self._vcam_status_lbl.setStyleSheet("color: #8888A0; font-size: 12px;")
+            vcam_layout.addWidget(self._vcam_status_lbl)
+            vcam_btn = QPushButton("Load v4l2loopback")
+            vcam_btn.clicked.connect(self._load_v4l2)
+            vcam_layout.addWidget(vcam_btn)
+            layout.addWidget(vcam)
 
         layout.addStretch()
 
-        # Fixed button row OUTSIDE scroll area (always visible at bottom)
-        btn_frame = QFrame()
-        btn_frame.setStyleSheet(
-            "QFrame { background: #0D0E14; border-top: 1px solid #1E1F2E; }"
-        )
-        btn_row = QHBoxLayout(btn_frame)
-        btn_row.setContentsMargins(24, 12, 24, 16)
-        btn_row.addStretch()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setMinimumWidth(90)
-        cancel_btn.setMinimumHeight(36)
-        cancel_btn.clicked.connect(self.reject)
-        save_btn = QPushButton("Save")
+        # ── Save / Close ──────────────────────────────────────────────────────
+        btn_bar = QHBoxLayout()
+        btn_bar.setContentsMargins(24, 12, 24, 16)
+        save_btn = QPushButton("Save & Close")
         save_btn.setObjectName("primaryBtn")
-        save_btn.setMinimumWidth(90)
-        save_btn.setMinimumHeight(36)
-        save_btn.clicked.connect(self._on_save)
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(save_btn)
-        outer.addWidget(btn_frame)
+        save_btn.setFixedHeight(40)
+        save_btn.clicked.connect(self._save_and_close)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.clicked.connect(self.reject)
+        btn_bar.addStretch()
+        btn_bar.addWidget(cancel_btn)
+        btn_bar.addWidget(save_btn)
+        outer.addLayout(btn_bar)
 
-    # ── Resolution index helpers ──────────────────────────────────────────
-    _MODE_TO_RES = {"speed": 0, "balanced": 1, "quality": 2}
+        self._refresh_model_status()
+
+    # ── Model status helpers ──────────────────────────────────────────────────
+
+    def _refresh_model_status(self):
+        from models.downloader import ModelDownloader
+        dl = ModelDownloader(self.config.models_dir)
+        inswapper_ok = dl._inswapper_ok()
+        buffalo_ok   = dl._buffalo_ok()
+
+        if inswapper_ok and buffalo_ok:
+            self._model_status_lbl.setText("✅ All models present and valid.")
+            self._model_status_lbl.setStyleSheet("color: #22D98F; font-size: 12px;")
+            self._dl_btn.setText("Re-download Models")
+        else:
+            missing = []
+            if not inswapper_ok:
+                missing.append("inswapper_128.onnx")
+            if not buffalo_ok:
+                missing.append("buffalo_l detection files")
+            self._model_status_lbl.setText(
+                f"⚠️  Missing: {', '.join(missing)}\n"
+                "Click 'Download Models' or install manually below."
+            )
+            self._model_status_lbl.setStyleSheet("color: #FFB547; font-size: 12px;")
+            self._dl_btn.setText("Download Models")
+
+        self._inswapper_status.setText("✅" if inswapper_ok else "❌")
+        self._buffalo_status.setText("✅"   if buffalo_ok   else "❌")
+        self._models_dir_lbl.setText(f"Models folder: {self.config.models_dir}")
+
+    # ── Auto download ─────────────────────────────────────────────────────────
+
+    def _start_download(self):
+        from models.downloader import ModelDownloader
+        self._dl_btn.setEnabled(False)
+        self._stop_dl_btn.setVisible(True)
+        self._dl_progress.setValue(0)
+        self._dl_progress.setVisible(True)
+        self._dl_msg_lbl.setVisible(True)
+        self._dl_msg_lbl.setText("Starting download…")
+
+        self._downloader = ModelDownloader(self.config.models_dir)
+        self._downloader.progress_updated.connect(self._on_dl_progress)
+        self._downloader.all_done.connect(self._on_dl_done)
+        self._downloader.download_failed.connect(self._on_dl_failed)
+        self._downloader.start()
+
+    def _stop_download(self):
+        if self._downloader:
+            self._downloader.stop()
+        self._stop_dl_btn.setVisible(False)
+        self._dl_btn.setEnabled(True)
+        self._dl_progress.setVisible(False)
+        self._dl_msg_lbl.setText("Download stopped.")
+
+    def _on_dl_progress(self, pct: int, msg: str):
+        self._dl_progress.setValue(pct)
+        self._dl_msg_lbl.setText(msg)
+
+    def _on_dl_done(self):
+        self._stop_dl_btn.setVisible(False)
+        self._dl_progress.setVisible(False)
+        self._dl_msg_lbl.setVisible(False)
+        self._dl_btn.setEnabled(True)
+        self._refresh_model_status()
+        QMessageBox.information(self, "Download Complete",
+                                "✅ All models downloaded and ready!")
+
+    def _on_dl_failed(self, name: str, error: str):
+        self._stop_dl_btn.setVisible(False)
+        self._dl_progress.setVisible(False)
+        self._dl_btn.setEnabled(True)
+        self._dl_msg_lbl.setText(f"❌ {error.splitlines()[0]}")
+        self._refresh_model_status()
+        QMessageBox.warning(self, "Download Failed",
+                            f"{error}\n\nYou can also install models manually using the Browse buttons below.")
+
+    # ── Manual browse ─────────────────────────────────────────────────────────
+
+    def _browse_inswapper(self):
+        """Let user pick inswapper_128.onnx from their computer and copy it in."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select inswapper_128.onnx", "",
+            "ONNX Model (*.onnx)"
+        )
+        if not path:
+            return
+        src = Path(path)
+        if src.stat().st_size < 100 * 1024 * 1024:
+            QMessageBox.warning(self, "File Too Small",
+                "This file seems too small to be inswapper_128.onnx.\n"
+                "The real file is ~554 MB. Please check you selected the right file.")
+            return
+        dest = Path(self.config.models_dir) / "inswapper_128.onnx"
+        try:
+            import shutil
+            self._model_status_lbl.setText("Copying inswapper_128.onnx…")
+            shutil.copy2(str(src), str(dest))
+            self._refresh_model_status()
+            QMessageBox.information(self, "Done", "✅ inswapper_128.onnx installed!")
+        except Exception as e:
+            QMessageBox.critical(self, "Copy Failed", str(e))
+
+    def _browse_buffalo_folder(self):
+        """Let user pick the buffalo_l folder containing the 5 .onnx files."""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select the buffalo_l folder (containing .onnx files)"
+        )
+        if not folder:
+            return
+        src_dir = Path(folder)
+        onnx_files = list(src_dir.glob("*.onnx"))
+        if len(onnx_files) < 2:
+            QMessageBox.warning(self, "Wrong Folder",
+                "This folder doesn't look right — expected at least 5 .onnx files.\n"
+                "Select the folder named 'buffalo_l' that contains det_10g.onnx, w600k_r50.onnx, etc.")
+            return
+        dest_dir = Path(self.config.models_dir) / "models" / "buffalo_l"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import shutil
+            copied = 0
+            for f in onnx_files:
+                shutil.copy2(str(f), str(dest_dir / f.name))
+                copied += 1
+            self._refresh_model_status()
+            QMessageBox.information(self, "Done",
+                f"✅ Copied {copied} model files to buffalo_l folder!")
+        except Exception as e:
+            QMessageBox.critical(self, "Copy Failed", str(e))
+
+    # ── Virtual camera (Linux) ────────────────────────────────────────────────
+
+    def _load_v4l2(self):
+        ok = os.path.exists('/dev/video10')
+        if ok:
+            self._vcam_status_lbl.setText("✅ Virtual camera already active (/dev/video10)")
+            return
+        try:
+            subprocess.run(
+                ['sudo', 'modprobe', 'v4l2loopback',
+                 'devices=1', 'video_nr=10',
+                 'card_label=Echelon Camera', 'exclusive_caps=1'],
+                check=True, timeout=15
+            )
+            self._vcam_status_lbl.setText("✅ Virtual camera loaded!")
+        except Exception as e:
+            self._vcam_status_lbl.setText(f"❌ Failed: {e}\nRun manually: sudo modprobe v4l2loopback")
+
+    # ── Load / Save ───────────────────────────────────────────────────────────
 
     def load_from_config(self, config: AppConfig):
         self._login_cb.setChecked(config.launch_on_login)
@@ -188,103 +385,35 @@ class SettingsDialog(QDialog):
         idx = self._perf_combo.findText(config.performance_mode)
         if idx >= 0:
             self._perf_combo.setCurrentIndex(idx)
-        self._vcam_edit.setText(config.virtual_camera_device)
-        idx2 = self._loglevel_combo.findText(config.log_level)
-        if idx2 >= 0:
-            self._loglevel_combo.setCurrentIndex(idx2)
+        res = f"{config.output_width}x{config.output_height}"
+        res_idx = self._res_combo.findText(res)
+        if res_idx >= 0:
+            self._res_combo.setCurrentIndex(res_idx)
+        fps_idx = self._fps_combo.findText(str(config.output_fps))
+        if fps_idx >= 0:
+            self._fps_combo.setCurrentIndex(fps_idx)
+        self._auto_tune_cb.setChecked(config.auto_tune)
         self._skip_slider.setValue(config.frame_skip)
-        self._skip_val_lbl.setText(str(config.frame_skip))
         self._det_slider.setValue(config.face_detect_interval)
-        self._det_val_lbl.setText(str(config.face_detect_interval))
-        self._res_combo.setCurrentIndex(self._MODE_TO_RES.get(config.performance_mode, 1))
-        self._autotune_cb.setChecked(config.auto_tune)
-        self._update_preset_list()
+        if IS_LINUX and hasattr(self, '_vcam_status_lbl'):
+            ok = os.path.exists('/dev/video10')
+            self._vcam_status_lbl.setText(
+                "✅ Virtual camera active (/dev/video10)" if ok
+                else "❌ Virtual camera not loaded — click button to load"
+            )
 
-    def save_to_config(self, config: AppConfig):
-        config.launch_on_login = self._login_cb.isChecked()
-        config.start_minimized = self._minimized_cb.isChecked()
-        config.performance_mode = self._perf_combo.currentText()
-        config.virtual_camera_device = self._vcam_edit.text()
-        config.log_level = self._loglevel_combo.currentText()
-        config.frame_skip = self._skip_slider.value()
-        config.face_detect_interval = self._det_slider.value()
-        config.auto_tune = self._autotune_cb.isChecked()
-
-    def _on_optimize(self):
-        """Preset tuned for 8 GB RAM / no GPU."""
-        self._skip_slider.setValue(2)
-        self._det_slider.setValue(5)
-        self._res_combo.setCurrentIndex(0)
-        self._perf_combo.setCurrentText("speed")
-        self._autotune_cb.setChecked(True)
-        QMessageBox.information(
-            self, "Optimized",
-            "Settings tuned for CPU-only / 8 GB RAM:\n"
-            "  Frame skip: 2  •  Detect every 5 frames  •  480p"
-        )
-
-    def _on_save(self):
-        self.save_to_config(self.config)
+    def _save_and_close(self):
+        self.config.launch_on_login   = self._login_cb.isChecked()
+        self.config.start_minimized   = self._minimized_cb.isChecked()
+        self.config.performance_mode  = self._perf_combo.currentText()
+        res = self._res_combo.currentText().split("x")
+        if len(res) == 2:
+            self.config.output_width  = int(res[0])
+            self.config.output_height = int(res[1])
+        self.config.output_fps            = int(self._fps_combo.currentText())
+        self.config.auto_tune             = self._auto_tune_cb.isChecked()
+        self.config.frame_skip            = self._skip_slider.value()
+        self.config.face_detect_interval  = self._det_slider.value()
         from config.manager import ConfigManager
         ConfigManager().save(self.config)
         self.accept()
-
-    def _open_log(self):
-        log_path = BASE_DIR / "logs" / "echelon.log"
-        try:
-            if sys.platform == "win32":
-                subprocess.Popen(["notepad.exe", str(log_path)])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(log_path)])
-            else:
-                subprocess.Popen(["xdg-open", str(log_path)])
-        except Exception:
-            pass
-
-    # ── Preset helpers ────────────────────────────────────────────────────
-
-    def _update_preset_list(self):
-        self._presets_combo.clear()
-        for p in (self.config.presets or []):
-            self._presets_combo.addItem(p.get("name", "Unnamed"))
-
-    def _on_save_preset(self):
-        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        preset = {
-            "name": name,
-            "performance_mode": self._perf_combo.currentText(),
-            "bg_blur": "off",
-            "target_face_mode": "largest",
-        }
-        if self.config.presets is None:
-            self.config.presets = []
-        self.config.presets = [p for p in self.config.presets if p.get("name") != name]
-        self.config.presets.append(preset)
-        self._update_preset_list()
-        self._presets_combo.setCurrentText(name)
-
-    def _on_load_preset(self):
-        idx = self._presets_combo.currentIndex()
-        if idx < 0 or not self.config.presets:
-            return
-        preset = self.config.presets[idx]
-        mode = preset.get("performance_mode", "balanced")
-        i = self._perf_combo.findText(mode)
-        if i >= 0:
-            self._perf_combo.setCurrentIndex(i)
-
-    def _on_delete_preset(self):
-        idx = self._presets_combo.currentIndex()
-        if idx < 0 or not self.config.presets:
-            return
-        self.config.presets.pop(idx)
-        self._update_preset_list()
-
-    def _on_check_updates(self):
-        QMessageBox.information(
-            self, "Check for Updates",
-            "Echelon v2.0 \u2014 You\u2019re up to date!"
-        )
