@@ -6,7 +6,7 @@ Unicode True
 SetCompressor /SOLID lzma
 
 !define APP_NAME        "Echelon"
-!define APP_VERSION     "2.1.0"
+!define APP_VERSION     "2.3.0"
 !define APP_PUBLISHER   "Zero"
 !define APP_EXE         "Echelon.exe"
 !define INSTALL_DIR     "$PROGRAMFILES64\Echelon"

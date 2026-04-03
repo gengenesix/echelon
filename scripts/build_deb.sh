@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="2.1.0"
+VERSION="2.3.0"
 PKG="echelon_${VERSION}_amd64"
 echo "=== Building Echelon .deb package ==="
 

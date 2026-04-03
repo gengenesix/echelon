@@ -190,7 +190,7 @@ jobs:
 
       - name: Verify outputs
         run: |
-          ls -lh Echelon-x86_64.AppImage echelon_2.1.0_amd64.deb
+          ls -lh Echelon-x86_64.AppImage echelon_2.3.0_amd64.deb
           echo "All outputs verified OK"
 
       - name: Upload Linux packages
@@ -199,7 +199,7 @@ jobs:
           name: Echelon-Linux
           path: |
             Echelon-x86_64.AppImage
-            echelon_2.1.0_amd64.deb
+            echelon_2.3.0_amd64.deb
           retention-days: 90
 
   # ═══════════════════════════════════════════
@@ -357,7 +357,7 @@ jobs:
             | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
             | 🍎 **macOS** | `Echelon-macOS.dmg` | Open DMG → drag Echelon to Applications |
             | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | `chmod +x Echelon-x86_64.AppImage` then double-click |
-            | 🐧 **Ubuntu / Debian** | `echelon_2.1.0_amd64.deb` | `sudo dpkg -i echelon_2.1.0_amd64.deb` |
+            | 🐧 **Ubuntu / Debian** | `echelon_2.3.0_amd64.deb` | `sudo dpkg -i echelon_2.3.0_amd64.deb` |
 
             ---
 
@@ -389,7 +389,7 @@ jobs:
             release/Echelon-Setup.exe
             release/Echelon-macOS.dmg
             release/Echelon-x86_64.AppImage
-            release/echelon_2.1.0_amd64.deb
+            release/echelon_2.3.0_amd64.deb
           draft: false
           prerelease: false
           fail_on_unmatched_files: false

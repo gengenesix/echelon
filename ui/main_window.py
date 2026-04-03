@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(name_lbl)
 
         layout.addSpacing(8)
-        ver_lbl = QLabel("v2.1")
+        ver_lbl = QLabel("v2.3")
         ver_lbl.setStyleSheet(
             "color: #50516A; font-size: 11px; background: transparent; padding-top: 4px;"
         )
