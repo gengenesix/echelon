@@ -55,7 +55,7 @@ jobs:
             exit 1
           }
           $size = (Get-ChildItem "dist\Echelon" -Recurse | Measure-Object -Property Length -Sum).Sum
-          Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB — OK"
+          Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB - OK"
 
       - name: Install NSIS
         shell: powershell
@@ -103,7 +103,7 @@ jobs:
         shell: powershell
         run: |
           if (!(Test-Path "Echelon-Setup.exe")) { Write-Error "Installer missing"; exit 1 }
-          Write-Host "Installer: $([math]::Round((Get-Item Echelon-Setup.exe).Length/1MB,0)) MB — OK"
+          Write-Host "Installer: $([math]::Round((Get-Item Echelon-Setup.exe).Length/1MB,0)) MB - OK"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
