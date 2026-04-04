@@ -14,10 +14,10 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.5.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -106,7 +106,7 @@ jobs:
           Write-Host "Installer: $([math]::Round((Get-Item Echelon-Setup.exe).Length/1MB,0)) MB - OK"
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-Windows
           path: Echelon-Setup.exe
@@ -118,10 +118,10 @@ jobs:
   build-linux:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.5.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -184,7 +184,7 @@ jobs:
         run: ls -lh Echelon-x86_64.AppImage echelon_2.3.0_amd64.deb && echo "All outputs OK"
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-Linux
           path: |
@@ -201,10 +201,10 @@ jobs:
   build-macos-arm64:
     runs-on: macos-latest   # Apple Silicon (arm64)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.5.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -250,7 +250,7 @@ jobs:
           echo "arm64 build: OK"
 
       - name: Upload arm64 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-macOS-arm64
           path: dist/Echelon.app
@@ -259,10 +259,10 @@ jobs:
   build-macos-x86_64:
     runs-on: macos-13       # Intel (x86_64)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.5.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -308,7 +308,7 @@ jobs:
           echo "x86_64 build: OK"
 
       - name: Upload x86_64 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-macOS-x86_64
           path: dist/Echelon.app
@@ -319,16 +319,16 @@ jobs:
     needs: [build-macos-arm64, build-macos-x86_64]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Download arm64 build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         with:
           name: Echelon-macOS-arm64
           path: Echelon-arm64.app
 
       - name: Download x86_64 build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         with:
           name: Echelon-macOS-x86_64
           path: Echelon-x86_64.app
@@ -402,7 +402,7 @@ jobs:
           echo "Echelon-macOS.dmg: $SIZE — OK"
 
       - name: Upload macOS .dmg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-macOS
           path: Echelon-macOS.dmg
@@ -419,21 +419,21 @@ jobs:
       contents: write
     steps:
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         continue-on-error: true
         with:
           name: Echelon-Windows
           path: release/
 
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         continue-on-error: true
         with:
           name: Echelon-Linux
           path: release/
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.3.0
         continue-on-error: true
         with:
           name: Echelon-macOS
@@ -443,7 +443,7 @@ jobs:
         run: ls -lh release/ || echo "No release files found"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.2.1
         with:
           name: "Echelon ${{ github.ref_name }} — by Zero"
           body: |
