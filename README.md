@@ -30,6 +30,27 @@ Created by **Zero** · v2.1.0
 
 ---
 
+## 🍎 macOS Install
+
+### Download `Echelon-macOS.dmg` → open it → drag Echelon to Applications
+
+**Universal Binary** — works on Intel Macs AND Apple Silicon (M1/M2/M3/M4).
+
+**⚠️ First launch fix (Gatekeeper blocks unsigned apps):**
+
+```bash
+# Run once in Terminal after installing:
+xattr -rd com.apple.quarantine /Applications/Echelon.app
+```
+
+Or: right-click `Echelon.app` → **Open** → **Open**. One time only.
+
+> This is safe — you downloaded directly from GitHub Releases. This is standard for free apps without Apple's $99/year notarization.
+
+**Virtual camera on macOS:** Install [OBS Studio](https://obsproject.com/) → enable OBS Virtual Camera → select it in your video call app.
+
+---
+
 ## 🐧 Linux Install
 
 ### Option A — AppImage (works on ANY Linux distro, no install needed)
@@ -70,7 +91,7 @@ The `run.sh` launcher tries to load v4l2loopback automatically if not already lo
 
 ---
 
-## 🆕 What's New in v2.1.0
+## 🆕 What's New in v2.3.0
 
 - ✅ **Drag & drop** — drag a photo directly onto the upload zone
 - ✅ **Instant face upload** — detector loaded once, cached for all subsequent uploads (~instant vs 3-5s before)

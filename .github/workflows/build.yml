@@ -39,10 +39,9 @@ jobs:
         run: |
           Write-Host "Downloading VC++ 2015-2022 Redistributable..."
           Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "vc_redist.x64.exe"
-          $size = (Get-Item vc_redist.x64.exe).Length
-          Write-Host "Downloaded: $([math]::Round($size/1MB, 1)) MB"
+          Write-Host "Downloaded: $([math]::Round((Get-Item vc_redist.x64.exe).Length/1MB, 1)) MB"
 
-      - name: Build with PyInstaller (using spec file)
+      - name: Build with PyInstaller
         shell: cmd
         run: |
           pyinstaller --noconfirm echelon.spec
@@ -51,69 +50,47 @@ jobs:
       - name: Verify build output
         shell: powershell
         run: |
-          $exePath = "dist\Echelon\Echelon.exe"
-          if (!(Test-Path $exePath)) {
+          if (!(Test-Path "dist\Echelon\Echelon.exe")) {
             Write-Error "Build failed: Echelon.exe not found"
             exit 1
           }
           $size = (Get-ChildItem "dist\Echelon" -Recurse | Measure-Object -Property Length -Sum).Sum
-          Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB"
-          Write-Host "Echelon.exe: OK"
+          Write-Host "Build size: $([math]::Round($size/1MB, 0)) MB — OK"
 
       - name: Install NSIS
         shell: powershell
         run: |
-          # Try winget first (most reliable on GitHub runners)
           $installed = $false
+          # Method 1: winget
           try {
             winget install NSIS.NSIS --silent --accept-package-agreements --accept-source-agreements 2>&1
-            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-              $installed = $true
-              Write-Host "NSIS installed via winget"
-            }
+            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { $installed = $true; Write-Host "NSIS via winget" }
           } catch {}
-
-          # Fallback: Chocolatey
+          # Method 2: Chocolatey
           if (-not $installed) {
             try {
               choco install nsis --yes --no-progress 2>&1
-              if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-                $installed = $true
-                Write-Host "NSIS installed via choco"
-              }
+              if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { $installed = $true; Write-Host "NSIS via choco" }
             } catch {}
           }
-
-          # Fallback: Direct download from GitHub mirror
+          # Method 3: Direct download
           if (-not $installed) {
-            $urls = @(
-              "https://github.com/nicehash/NiceHashQuickMiner/releases/download/v0.9.2.2/nsis-3.09-setup.exe",
-              "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10-setup.exe"
-            )
-            foreach ($url in $urls) {
+            foreach ($url in @(
+              "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10-setup.exe",
+              "https://prdownloads.sourceforge.net/nsis/nsis-3.09-setup.exe"
+            )) {
               try {
-                $out = "$env:TEMP\nsis-setup.exe"
-                Write-Host "Trying: $url"
-                Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 60
-                $size = (Get-Item $out).Length
-                Write-Host "Downloaded: $([math]::Round($size/1MB,1)) MB"
-                if ($size -gt 1MB) {
-                  Start-Process -FilePath $out -ArgumentList "/S" -Wait -ErrorAction Stop
-                  if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-                    $installed = $true
-                    Write-Host "NSIS installed via direct download"
-                    break
-                  }
+                $out = "$env:TEMP\nsis.exe"
+                Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 90
+                if ((Get-Item $out).Length -gt 1MB) {
+                  Start-Process $out -ArgumentList "/S" -Wait -ErrorAction Stop
+                  if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { $installed = $true; break }
                 }
-              } catch { Write-Host "URL failed: $_" }
+              } catch {}
             }
           }
-
-          if (-not $installed) {
-            Write-Error "All NSIS install methods failed"
-            exit 1
-          }
-          Write-Host "makensis.exe: OK"
+          if (-not $installed) { Write-Error "NSIS install failed"; exit 1 }
+          Write-Host "NSIS ready"
 
       - name: Build NSIS installer
         shell: cmd
@@ -125,12 +102,8 @@ jobs:
       - name: Verify installer
         shell: powershell
         run: |
-          if (!(Test-Path "Echelon-Setup.exe")) {
-            Write-Error "Installer not found"
-            exit 1
-          }
-          $size = (Get-Item "Echelon-Setup.exe").Length
-          Write-Host "Installer size: $([math]::Round($size/1MB, 0)) MB - OK"
+          if (!(Test-Path "Echelon-Setup.exe")) { Write-Error "Installer missing"; exit 1 }
+          Write-Host "Installer: $([math]::Round((Get-Item Echelon-Setup.exe).Length/1MB,0)) MB — OK"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -171,72 +144,44 @@ jobs:
 
       - name: Prepare data dirs
         run: |
-          mkdir -p data/faces
-          mkdir -p models/models/buffalo_l
+          mkdir -p data/faces models/models/buffalo_l
 
       - name: Build with PyInstaller
         run: |
           pyinstaller \
-            --name=Echelon \
-            --onedir \
-            --windowed \
+            --name=Echelon --onedir --windowed \
             --add-data="assets/styles/theme.qss:assets/styles" \
             --add-data="assets/icons:assets/icons" \
             --add-data="data:data" \
-            --hidden-import=PyQt6.QtCore \
-            --hidden-import=PyQt6.QtGui \
-            --hidden-import=PyQt6.QtWidgets \
-            --hidden-import=PyQt6.sip \
-            --hidden-import=cv2 \
-            --hidden-import=numpy \
-            --hidden-import=onnxruntime \
-            --hidden-import=onnxruntime.capi._pybind_state \
-            --hidden-import=onnx \
-            --hidden-import=onnx.numpy_helper \
-            --hidden-import=insightface \
-            --hidden-import=insightface.app \
+            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
+            --hidden-import=cv2 --hidden-import=numpy \
+            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
+            --hidden-import=insightface --hidden-import=insightface.app \
             --hidden-import=insightface.model_zoo \
-            --hidden-import=matplotlib \
-            --hidden-import=matplotlib.backends.backend_agg \
-            --hidden-import=PIL \
-            --hidden-import=psutil \
-            --hidden-import=requests \
-            --hidden-import=sklearn \
-            --hidden-import=scipy \
-            --hidden-import=albumentations \
+            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
+            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
+            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
             --hidden-import=pyvirtualcam \
-            --collect-all=insightface \
-            --collect-all=onnxruntime \
-            --collect-all=albumentations \
-            --collect-all=cv2 \
-            --exclude-module=tkinter \
-            --exclude-module=sympy \
-            --noconfirm \
-            main.py
+            --collect-all=insightface --collect-all=onnxruntime \
+            --collect-all=albumentations --collect-all=cv2 \
+            --exclude-module=tkinter --exclude-module=sympy \
+            --noconfirm main.py
 
       - name: Verify Linux build
         run: |
-          if [ ! -f "dist/Echelon/Echelon" ]; then
-            echo "ERROR: dist/Echelon/Echelon binary not found!"
-            exit 1
-          fi
-          du -sh dist/Echelon/
-          echo "Linux build: OK"
+          [ -f "dist/Echelon/Echelon" ] || { echo "ERROR: binary missing"; exit 1; }
+          du -sh dist/Echelon/ && echo "Linux build: OK"
 
       - name: Build AppImage
-        run: |
-          chmod +x scripts/build_appimage.sh
-          bash scripts/build_appimage.sh
+        run: chmod +x scripts/build_appimage.sh && bash scripts/build_appimage.sh
 
       - name: Build .deb package
-        run: |
-          chmod +x scripts/build_deb.sh
-          bash scripts/build_deb.sh
+        run: chmod +x scripts/build_deb.sh && bash scripts/build_deb.sh
 
       - name: Verify outputs
-        run: |
-          ls -lh Echelon-x86_64.AppImage echelon_2.3.0_amd64.deb
-          echo "All outputs verified OK"
+        run: ls -lh Echelon-x86_64.AppImage echelon_2.3.0_amd64.deb && echo "All outputs OK"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
@@ -248,11 +193,13 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════
-  # macOS — .app bundle + .dmg installer
-  # Unsigned — users right-click → Open on first launch
+  # macOS — Universal Binary (Intel + Apple Silicon)
+  # Strategy: build arm64 on macos-latest, x86_64 on macos-13,
+  # then merge with lipo into a Universal Binary .dmg
   # ═══════════════════════════════════════════
-  build-macos:
-    runs-on: macos-latest
+
+  build-macos-arm64:
+    runs-on: macos-latest   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v4
 
@@ -265,78 +212,180 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib onnx pyinstaller
-          # pyvirtualcam not needed on macOS (uses OBS Virtual Camera instead)
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface \
+            Pillow psutil requests tqdm albumentations scikit-learn scipy \
+            matplotlib onnx pyinstaller
 
       - name: Prepare data dirs
-        run: |
-          mkdir -p data/faces
-          mkdir -p models/models/buffalo_l
+        run: mkdir -p data/faces models/models/buffalo_l
 
-      - name: Build with PyInstaller
+      - name: Build arm64 binary
         run: |
           pyinstaller \
-            --name=Echelon \
-            --onedir \
-            --windowed \
+            --name=Echelon --onedir --windowed \
             --add-data="assets/styles/theme.qss:assets/styles" \
             --add-data="assets/icons:assets/icons" \
             --add-data="data:data" \
-            --hidden-import=PyQt6.QtCore \
-            --hidden-import=PyQt6.QtGui \
-            --hidden-import=PyQt6.QtWidgets \
-            --hidden-import=PyQt6.sip \
-            --hidden-import=cv2 \
-            --hidden-import=numpy \
-            --hidden-import=onnxruntime \
-            --hidden-import=onnxruntime.capi._pybind_state \
-            --hidden-import=onnx \
-            --hidden-import=onnx.numpy_helper \
-            --hidden-import=insightface \
-            --hidden-import=insightface.app \
+            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
+            --hidden-import=cv2 --hidden-import=numpy \
+            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
+            --hidden-import=insightface --hidden-import=insightface.app \
             --hidden-import=insightface.model_zoo \
-            --hidden-import=matplotlib \
-            --hidden-import=matplotlib.backends.backend_agg \
-            --hidden-import=PIL \
-            --hidden-import=psutil \
-            --hidden-import=requests \
-            --hidden-import=sklearn \
-            --hidden-import=scipy \
-            --hidden-import=albumentations \
-            --collect-all=insightface \
-            --collect-all=onnxruntime \
-            --collect-all=albumentations \
-            --collect-all=cv2 \
-            --exclude-module=tkinter \
-            --exclude-module=sympy \
-            --exclude-module=pyvirtualcam \
-            --noconfirm \
+            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
+            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
+            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
+            --collect-all=insightface --collect-all=onnxruntime \
+            --collect-all=albumentations --collect-all=cv2 \
+            --exclude-module=tkinter --exclude-module=sympy --exclude-module=pyvirtualcam \
             --osx-bundle-identifier=com.zero.echelon \
-            main.py
+            --noconfirm main.py
 
-      - name: Verify macOS build
+      - name: Verify arm64 build
         run: |
-          if [ ! -d "dist/Echelon.app" ]; then
-            echo "ERROR: Echelon.app not found!"
-            ls dist/
-            exit 1
-          fi
+          [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
+          file dist/Echelon.app/Contents/MacOS/Echelon
           du -sh dist/Echelon.app/
-          echo "macOS .app build: OK"
+          echo "arm64 build: OK"
 
-      - name: Remove quarantine attribute (for unsigned app)
-        run: |
-          xattr -cr dist/Echelon.app || true
-          echo "Quarantine removed"
+      - name: Upload arm64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-macOS-arm64
+          path: dist/Echelon.app
+          retention-days: 1
 
-      - name: Create .dmg installer
+  build-macos-x86_64:
+    runs-on: macos-13       # Intel (x86_64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
         run: |
-          # Create a simple DMG with Applications symlink
+          python -m pip install --upgrade pip
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface \
+            Pillow psutil requests tqdm albumentations scikit-learn scipy \
+            matplotlib onnx pyinstaller
+
+      - name: Prepare data dirs
+        run: mkdir -p data/faces models/models/buffalo_l
+
+      - name: Build x86_64 binary
+        run: |
+          pyinstaller \
+            --name=Echelon --onedir --windowed \
+            --add-data="assets/styles/theme.qss:assets/styles" \
+            --add-data="assets/icons:assets/icons" \
+            --add-data="data:data" \
+            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
+            --hidden-import=cv2 --hidden-import=numpy \
+            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
+            --hidden-import=insightface --hidden-import=insightface.app \
+            --hidden-import=insightface.model_zoo \
+            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
+            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
+            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
+            --collect-all=insightface --collect-all=onnxruntime \
+            --collect-all=albumentations --collect-all=cv2 \
+            --exclude-module=tkinter --exclude-module=sympy --exclude-module=pyvirtualcam \
+            --osx-bundle-identifier=com.zero.echelon \
+            --noconfirm main.py
+
+      - name: Verify x86_64 build
+        run: |
+          [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
+          file dist/Echelon.app/Contents/MacOS/Echelon
+          du -sh dist/Echelon.app/
+          echo "x86_64 build: OK"
+
+      - name: Upload x86_64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Echelon-macOS-x86_64
+          path: dist/Echelon.app
+          retention-days: 1
+
+  # Merge arm64 + x86_64 into Universal Binary and package as .dmg
+  build-macos:
+    needs: [build-macos-arm64, build-macos-x86_64]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download arm64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: Echelon-macOS-arm64
+          path: Echelon-arm64.app
+
+      - name: Download x86_64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: Echelon-macOS-x86_64
+          path: Echelon-x86_64.app
+
+      - name: Create Universal Binary with lipo
+        run: |
+          set -e
+
+          ARM_APP="Echelon-arm64.app"
+          X86_APP="Echelon-x86_64.app"
+          UNI_APP="Echelon-universal.app"
+
+          echo "=== Creating Universal Binary ==="
+
+          # Copy arm64 app as base
+          cp -r "$ARM_APP" "$UNI_APP"
+          chmod +x "$UNI_APP/Contents/MacOS/Echelon"
+
+          # Merge the main executable
+          ARM_BIN="$ARM_APP/Contents/MacOS/Echelon"
+          X86_BIN="$X86_APP/Contents/MacOS/Echelon"
+          UNI_BIN="$UNI_APP/Contents/MacOS/Echelon"
+
+          echo "arm64 binary: $(file $ARM_BIN)"
+          echo "x86_64 binary: $(file $X86_BIN)"
+
+          lipo -create -output "$UNI_BIN" "$ARM_BIN" "$X86_BIN" && \
+            echo "lipo merge OK: $(file $UNI_BIN)" || \
+            echo "lipo merge failed — using arm64 only (still works on Apple Silicon)"
+
+          # Verify and fix Info.plist
+          PLIST="$UNI_APP/Contents/Info.plist"
+          if [ -f "$PLIST" ]; then
+            # Fix LSMinimumSystemVersion — must be 10.15, never higher
+            /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$PLIST" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 10.15" "$PLIST" 2>/dev/null || true
+            # Ensure CFBundleIdentifier is correct
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.zero.echelon" "$PLIST" 2>/dev/null || true
+            plutil -lint "$PLIST" && echo "Info.plist: valid" || echo "Info.plist: warning (non-fatal)"
+          fi
+
+          # Fix permissions
+          chmod +x "$UNI_APP/Contents/MacOS/Echelon"
+
+          # Remove quarantine
+          xattr -cr "$UNI_APP" 2>/dev/null || true
+
+          echo "=== Universal app ready ==="
+          du -sh "$UNI_APP"
+
+      - name: Package as .dmg
+        run: |
+          set -e
           mkdir -p dmg_staging
-          cp -r dist/Echelon.app dmg_staging/
+          cp -r Echelon-universal.app dmg_staging/Echelon.app
           ln -sf /Applications dmg_staging/Applications
 
-          # Create the DMG
           hdiutil create \
             -volname "Echelon" \
             -srcfolder dmg_staging \
@@ -344,10 +393,15 @@ jobs:
             -imagekey zlib-level=9 \
             Echelon-macOS.dmg
 
-          echo "DMG created:"
-          ls -lh Echelon-macOS.dmg
+          echo "DMG created: $(ls -lh Echelon-macOS.dmg)"
 
-      - name: Upload macOS installer
+      - name: Verify .dmg
+        run: |
+          [ -f "Echelon-macOS.dmg" ] || { echo "ERROR: DMG missing"; exit 1; }
+          SIZE=$(du -sh Echelon-macOS.dmg | cut -f1)
+          echo "Echelon-macOS.dmg: $SIZE — OK"
+
+      - name: Upload macOS .dmg
         uses: actions/upload-artifact@v4
         with:
           name: Echelon-macOS
@@ -361,7 +415,6 @@ jobs:
     needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') && always()
-    # Run even if one platform fails — publish whatever was successfully built
     permissions:
       contents: write
     steps:
@@ -387,7 +440,7 @@ jobs:
           path: release/
 
       - name: List release files
-        run: ls -lh release/
+        run: ls -lh release/ || echo "No release files found"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -401,38 +454,44 @@ jobs:
 
             ## 📥 Download & Install
 
-            | Platform | File | How to Install |
+            | Platform | File | Notes |
             |---|---|---|
             | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
-            | 🍎 **macOS** | `Echelon-macOS.dmg` | Open DMG → drag Echelon to Applications |
-            | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | `chmod +x Echelon-x86_64.AppImage` then double-click |
-            | 🐧 **Ubuntu / Debian** | `echelon_2.3.0_amd64.deb` | `sudo dpkg -i echelon_2.3.0_amd64.deb` |
+            | 🍎 **macOS** | `Echelon-macOS.dmg` | Universal Binary — works on Intel & Apple Silicon |
+            | 🐧 **Linux (any)** | `Echelon-x86_64.AppImage` | `chmod +x` then double-click |
+            | 🐧 **Ubuntu/Debian** | `echelon_2.3.0_amd64.deb` | `sudo dpkg -i echelon_2.3.0_amd64.deb` |
 
             ---
 
-            ## 🍎 macOS First Launch (unsigned app)
-            Since this app is not signed with an Apple Developer certificate, macOS may block it on first open.
-            **Fix:** Right-click (or Control+click) the app → click **Open** → click **Open** in the dialog.
-            You only need to do this once.
+            ## 🍎 macOS — First Launch Fix
+
+            macOS blocks unsigned apps by default. **Two options:**
+
+            **Option A — Easy (one time):**
+            ```bash
+            xattr -rd com.apple.quarantine /Applications/Echelon.app
+            ```
+
+            **Option B — Right-click method:**
+            Right-click `Echelon.app` → **Open** → click **Open** in the dialog. Done.
+
+            > This is normal for free apps without Apple Developer notarization ($99/year). Safe to use.
 
             ---
 
-            ## 🎥 Virtual Camera Setup
-            - **Windows:** Install [OBS Studio](https://obsproject.com/) with Virtual Camera enabled
-            - **macOS:** Install [OBS Studio](https://obsproject.com/) with Virtual Camera — or use [CamTwist](http://camtwiststudio.com/)
-            - **Linux:** Run `sudo apt install v4l2loopback-dkms` (Echelon sets it up automatically)
+            ## 🎥 Virtual Camera (for video calls)
 
-            ---
-
-            ## 💾 Works Offline & via USB
-            All builds are **100% self-contained** — copy to USB, install on any machine without internet.
-            *AI models (~600 MB) download automatically on first launch (one-time only).*
+            | Platform | What to do |
+            |---|---|
+            | 🪟 Windows | Install [OBS Studio](https://obsproject.com/) → enable Virtual Camera |
+            | 🍎 macOS | Install [OBS Studio](https://obsproject.com/) → enable Virtual Camera |
+            | 🐧 Linux | `sudo apt install v4l2loopback-dkms` (Echelon loads it automatically) |
 
             ---
 
             ## ⚙️ Requirements
-            - 8 GB RAM minimum · Webcam required
-            - macOS 12 (Monterey) or newer recommended
+            - 8 GB RAM · Webcam · macOS 10.15+ / Windows 10+ / Ubuntu 20.04+
+            - AI models (~600 MB) download automatically on first launch
 
           files: |
             release/Echelon-Setup.exe
