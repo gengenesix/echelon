@@ -112,9 +112,18 @@ class MainWindow(QMainWindow):
         icon_path = Path(resource_path("assets/icons/icon_256.png"))
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
+        # Enforce minimum size — layout never breaks
         self.setMinimumSize(900, 620)
         self.resize(self.config.window_width, self.config.window_height)
-        self.move(self.config.window_x, self.config.window_y)
+        # Restore position only if it's on a valid screen
+        screen = QApplication.primaryScreen()
+        if screen:
+            sg = screen.availableGeometry()
+            x = max(sg.left(), min(self.config.window_x, sg.right() - 200))
+            y = max(sg.top(), min(self.config.window_y, sg.bottom() - 100))
+            self.move(x, y)
+        else:
+            self.move(self.config.window_x, self.config.window_y)
 
     def _build_header(self):
         header = QFrame()
@@ -301,11 +310,14 @@ class MainWindow(QMainWindow):
         self.controls_panel.bg_blur_changed.connect(self._on_bg_blur_changed)
 
     def _setup_hotkeys(self):
-        QShortcut(QKeySequence("Space"), self, self._toggle_pipeline)
-        QShortcut(QKeySequence("F1"), self, self._cycle_mode)
-        QShortcut(QKeySequence("F2"), self, self._toggle_vcam)
-        QShortcut(QKeySequence("Escape"), self, self.hide)
+        QShortcut(QKeySequence("Space"),  self, self._toggle_pipeline)
+        QShortcut(QKeySequence("F1"),     self, self._cycle_mode)
+        QShortcut(QKeySequence("F2"),     self, self._toggle_vcam)
+        QShortcut(QKeySequence("Escape"), self, self.showMinimized)
         QShortcut(QKeySequence("Ctrl+Q"), self, self._quit_app)
+        # macOS standard shortcuts
+        QShortcut(QKeySequence("Ctrl+W"), self, self._quit_app)    # Cmd+W on macOS
+        QShortcut(QKeySequence("Ctrl+M"), self, self.showMinimized) # Cmd+M on macOS
 
     def _refresh_gallery(self):
         faces = self.face_gallery.list_faces()
@@ -469,9 +481,25 @@ class MainWindow(QMainWindow):
             self.pipeline.toggle_virtual_cam()
 
     def _quit_app(self):
-        """Ctrl+Q — actually quit (not just minimise)."""
+        """Clean shutdown — stops all threads before quitting."""
         self._save_geometry()
-        self.on_stop()
+
+        # Stop camera pipeline (camera + virtual cam + swap engine)
+        if self.pipeline and self.pipeline.isRunning():
+            self.pipeline.stop()
+
+        # Stop any in-progress face detection thread
+        if self._face_thread and self._face_thread.isRunning():
+            self._face_thread.quit()
+            self._face_thread.wait(1000)
+
+        # Save config
+        try:
+            from config.manager import ConfigManager
+            ConfigManager().save(self.config)
+        except Exception:
+            pass
+
         QApplication.quit()
 
     def _on_mode_changed(self, mode: str):
@@ -531,10 +559,9 @@ class MainWindow(QMainWindow):
         overlay.show()
 
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-        if self.tray:
-            self.tray.show_notification("Echelon", "Running in background")
+        """X button / Cmd+W — quit cleanly, stop all threads."""
+        self._quit_app()
+        event.accept()
 
     def _save_geometry(self):
         pos = self.pos()
