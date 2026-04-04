@@ -1,3 +1,10 @@
+"""
+Echelon Pipeline v2.5
+Improvements:
+  1. Face-reveal fix — always shows swapped frame, never real face when tracking lost
+  2. GPU auto-detection — CUDA / DirectML / CoreML / ROCm / CPU fallback
+  3. Optical flow face tracking — smooth tracking between detection frames
+"""
 import gc
 import time
 import traceback
@@ -12,7 +19,8 @@ import numpy as np
 from config.manager import AppConfig
 from core.hardware import HardwareInfo
 from core.capture import CameraCapture
-from core.face_detector import FaceDetector, DetectedFace
+from core.face_detector import FaceDetector, DetectedFace, get_global_detector
+from core.face_tracker import FaceTracker, TrackedFace
 from core.inference import FaceSwapEngine
 from core.enhancer import FaceEnhancer
 from core.virtual_camera import VirtualCameraOutput
@@ -37,60 +45,81 @@ class FPSCounter:
 
 
 class EchelonPipeline(QThread):
-    frames_ready = pyqtSignal(object, object)
-    fps_updated = pyqtSignal(float)
-    latency_updated = pyqtSignal(float)
-    status_changed = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
+    frames_ready      = pyqtSignal(object, object)
+    fps_updated       = pyqtSignal(float)
+    latency_updated   = pyqtSignal(float)
+    status_changed    = pyqtSignal(str)
+    error_occurred    = pyqtSignal(str)
     virtual_cam_status = pyqtSignal(bool)
     frame_skip_changed = pyqtSignal(int)
 
     def __init__(self, config: AppConfig, hw_info: HardwareInfo, parent=None):
         super().__init__(parent)
-        self.config = config
-        self.hw_info = hw_info
-        model_path = str(Path(config.models_dir) / "inswapper_128.onnx")
+        self.config      = config
+        self.hw_info     = hw_info
+        model_path       = str(Path(config.models_dir) / "inswapper_128.onnx")
+
         self.capture = CameraCapture(
             device_id=config.camera_device_id,
             width=config.output_width,
             height=config.output_height,
             fps=config.output_fps,
         )
-        self.face_detector = FaceDetector(config.models_dir, hw_info.onnx_providers)
+
+        # Use global cached detector (no cold-start delay)
+        self.face_detector = get_global_detector(config.models_dir, hw_info.onnx_providers)
         self.face_detector._detect_interval = config.face_detect_interval
+
+        # Swap engine with GPU providers
         self.swap_engine = FaceSwapEngine(model_path, hw_info.onnx_providers)
+
         self.virtual_cam = VirtualCameraOutput(
             device=config.virtual_camera_device,
             width=config.output_width,
             height=config.output_height,
             fps=config.output_fps,
         )
-        self.source_face = None
-        self._lock = Lock()
-        self._running = False
+
+        self.source_face  = None
+        self._lock        = Lock()
+        self._running     = False
         self.performance_mode = config.performance_mode
-        self.frame_skip = config.frame_skip
-        self._last_swapped_frame = None
-        self._frame_count = 0
+        self.frame_skip   = config.frame_skip
         self.auto_tune_enabled = config.auto_tune
-        self._perf_tuner = None
+        self._perf_tuner  = None
         self._vcam_active = False
         self.target_face_mode = getattr(config, 'target_face_mode', 'largest')
-        self.bg_blur = getattr(config, 'bg_blur', 'off')
-        self._enhancer = None
+        self.bg_blur      = getattr(config, 'bg_blur', 'off')
+        self._enhancer    = None
         self._try_load_enhancer()
+
+        # ── Improvement 1 & 3: Face tracker + last-frame safety net ──────────
+        self._tracker          = FaceTracker(max_track_frames=6)
+        self._last_swapped     = None   # last successfully swapped frame
+        self._last_raw         = None   # last raw camera frame
+        self._frame_count      = 0
+        self._detect_every     = config.face_detect_interval  # run full detection every N frames
+        self._frames_since_det = 0
 
     def set_source_face(self, face: DetectedFace):
         with self._lock:
             self.source_face = face
         self.face_detector.reset_tracking()
+        self._tracker.reset()
+        self._last_swapped = None
 
     def set_performance_mode(self, mode: str):
         self.performance_mode = mode
-        self.frame_skip = 2 if mode == 'speed' else (1 if mode == 'balanced' else 0)
-        self.face_detector._detect_interval = (
-            7 if mode == 'speed' else 5 if mode == 'balanced' else 3
-        )
+        if mode == 'speed':
+            self.frame_skip = 2
+            self._detect_every = 7
+        elif mode == 'balanced':
+            self.frame_skip = 1
+            self._detect_every = 5
+        else:  # quality
+            self.frame_skip = 0
+            self._detect_every = 3
+        self.face_detector._detect_interval = self._detect_every
         self.frame_skip_changed.emit(self.frame_skip)
 
     def enable_auto_tune(self, enabled: bool):
@@ -118,30 +147,16 @@ class EchelonPipeline(QThread):
     def _try_load_enhancer(self):
         try:
             self._enhancer = FaceEnhancer()
-            self._enhancer.load()  # fails silently if gfpgan not installed/model absent
+            self._enhancer.load()
         except Exception:
             self._enhancer = None
 
-    def _get_target_face(self, frame):
-        """Return the face to swap based on target_face_mode."""
-        mode = self.target_face_mode
-        if mode == 'largest':
-            return self.face_detector.get_tracked_face(frame)
-        faces = self.face_detector.get_tracked_faces(frame)
-        if not faces:
-            return None
-        def area(f):
-            b = f.bbox
-            return (b[2] - b[0]) * (b[3] - b[1])
-        if mode == 'smallest':
-            return min(faces, key=area)
-        elif mode == 'face_1':
-            return faces[0] if len(faces) >= 1 else None
-        elif mode == 'face_2':
-            return faces[1] if len(faces) >= 2 else None
-        elif mode == 'face_3':
-            return faces[2] if len(faces) >= 3 else None
-        return faces[0] if faces else None
+    def _get_processing_size(self):
+        if self.performance_mode == 'speed':
+            return (480, 360)
+        elif self.performance_mode == 'balanced':
+            return (640, 480)
+        return None
 
     def _apply_background_blur(self, frame, face_bbox, strength='light'):
         h, w = frame.shape[:2]
@@ -156,36 +171,49 @@ class EchelonPipeline(QThread):
         blurred = cv2.GaussianBlur(frame, (blur_amount, blur_amount), 0)
         mask_3ch = mask.astype(np.float32) / 255.0
         mask_3ch = np.stack([mask_3ch] * 3, axis=-1)
-        result = (frame.astype(np.float32) * mask_3ch
-                  + blurred.astype(np.float32) * (1 - mask_3ch))
+        result = frame.astype(np.float32) * mask_3ch + blurred.astype(np.float32) * (1 - mask_3ch)
         return result.astype(np.uint8)
 
-    def _get_processing_size(self):
-        if self.performance_mode == 'speed':
-            return (480, 360)
-        elif self.performance_mode == 'balanced':
-            return (640, 480)
-        return None
+    def _face_to_detected(self, tracked: TrackedFace) -> DetectedFace:
+        """Convert a TrackedFace back to DetectedFace for the swap engine."""
+        return DetectedFace(
+            bbox=tracked.bbox,
+            landmarks=tracked.landmarks,
+            embedding=tracked.embedding,
+            confidence=tracked.confidence,
+            age=tracked.age,
+            gender=tracked.gender,
+        )
 
     def run(self):
         try:
             self.status_changed.emit("Loading models...")
-            if not self.face_detector.load():
-                self.error_occurred.emit("Failed to load face detector. Check models directory.")
-                return
+
+            # Face detector
+            if not self.face_detector.is_loaded:
+                if not self.face_detector.load():
+                    self.error_occurred.emit("Failed to load face detector. Check models directory.")
+                    return
+
+            # Swap engine
             if not self.swap_engine.load():
                 self.error_occurred.emit("Failed to load swap model. Download inswapper_128.onnx first.")
                 return
+
+            # Camera
             if not self.capture.start():
                 self.error_occurred.emit("Failed to open camera. Check camera connection.")
                 return
+
+            # Virtual camera
             vcam_ok = self.virtual_cam.start()
             self._vcam_active = vcam_ok
             self.virtual_cam_status.emit(vcam_ok)
+
             self.status_changed.emit("Live")
-            self._running = True
-            fps_counter = FPSCounter()
-            loop_count = 0
+            self._running  = True
+            fps_counter    = FPSCounter()
+            loop_count     = 0
 
             while self._running:
                 frame = self.capture.get_frame()
@@ -195,25 +223,23 @@ class EchelonPipeline(QThread):
 
                 loop_count += 1
                 self._frame_count += 1
+                self._last_raw = frame
 
-                # Frame skip: reuse last swapped frame on skipped frames
+                # ── Frame skip: reuse last swapped frame ──────────────────────
                 if self.frame_skip > 0 and loop_count % (self.frame_skip + 1) != 0:
-                    if self._last_swapped_frame is not None:
-                        swapped = self._last_swapped_frame
-                        if self._vcam_active:
-                            self.virtual_cam.send_frame(swapped)
-                        fps = fps_counter.tick()
-                        self.frames_ready.emit(frame, swapped)
-                        if self._frame_count % 30 == 0:
-                            self.fps_updated.emit(fps)
-                        continue
+                    # FIX 1: use last swapped frame instead of showing real face
+                    output = self._last_swapped if self._last_swapped is not None else frame
+                    if self._vcam_active:
+                        self.virtual_cam.send_frame(output)
+                    fps = fps_counter.tick()
+                    self.frames_ready.emit(frame, output)
+                    if self._frame_count % 30 == 0:
+                        self.fps_updated.emit(fps)
+                    continue
 
-                # Downscale for processing if needed
+                # ── Processing size ───────────────────────────────────────────
                 proc_size = self._get_processing_size()
-                if proc_size:
-                    proc_frame = cv2.resize(frame, proc_size)
-                else:
-                    proc_frame = frame
+                proc_frame = cv2.resize(frame, proc_size) if proc_size else frame
 
                 start_time = time.perf_counter()
 
@@ -221,37 +247,55 @@ class EchelonPipeline(QThread):
                     src = self.source_face
 
                 if src is not None:
-                    swapped = None
+                    swapped        = None
                     blur_face_bbox = None
 
-                    if self.target_face_mode == 'all':
-                        faces = self.face_detector.get_tracked_faces(proc_frame)
-                        if faces:
-                            swapped = proc_frame.copy()
-                            for tface in faces:
-                                try:
-                                    swapped = self.swap_engine.swap_face(swapped, src, tface)
-                                except Exception:
-                                    pass
-                            blur_face_bbox = faces[0].bbox
+                    # ── FIX 3: Use optical flow tracking between detections ────
+                    self._frames_since_det += 1
+                    run_detection = (self._frames_since_det >= self._detect_every)
+
+                    if run_detection:
+                        self._frames_since_det = 0
+                        # Full detection
+                        if self.target_face_mode == 'all':
+                            faces = self.face_detector.detect_faces(proc_frame)
+                            target_face = faces[0] if faces else None
+                        else:
+                            target_face = self.face_detector.get_primary_face(proc_frame)
+
+                        self._tracker.update_from_detection(target_face, proc_frame)
+                        tracked = self._tracker.get_last()
                     else:
-                        target_face = self._get_target_face(proc_frame)
-                        if target_face is not None:
+                        # Optical flow track
+                        tracked = self._tracker.track(proc_frame)
+                        if tracked is None:
+                            # Tracking lost — force re-detection next frame
+                            self._frames_since_det = self._detect_every
+                            target_face = None
+                        else:
+                            target_face = self._face_to_detected(tracked)
+
+                    if target_face is not None:
+                        try:
                             swapped = self.swap_engine.swap_face(proc_frame, src, target_face)
                             blur_face_bbox = target_face.bbox
+                        except Exception as e:
+                            logger.debug(f"swap_face error: {e}")
+                            swapped = None
 
                     if swapped is not None:
                         # Background blur
                         if self.bg_blur != 'off' and blur_face_bbox is not None:
                             try:
-                                swapped = self._apply_background_blur(
-                                    swapped, blur_face_bbox, self.bg_blur)
+                                swapped = self._apply_background_blur(swapped, blur_face_bbox, self.bg_blur)
                             except Exception:
                                 pass
-                        # Resize back to full resolution
+
+                        # Scale back to full resolution
                         if proc_size:
                             swapped = cv2.resize(swapped, (frame.shape[1], frame.shape[0]))
-                        # GFPGAN enhancement in quality mode
+
+                        # Quality enhancement
                         if (self.performance_mode == 'quality'
                                 and self._enhancer is not None
                                 and self._enhancer.is_loaded()):
@@ -259,28 +303,36 @@ class EchelonPipeline(QThread):
                                 swapped = self._enhancer.enhance(swapped)
                             except Exception:
                                 pass
+
+                        # FIX 1: Save the last good swapped frame
+                        self._last_swapped = swapped
+
                     else:
-                        swapped = frame.copy()
+                        # FIX 1: Face not detected — use last swapped frame instead of real face
+                        if self._last_swapped is not None:
+                            swapped = self._last_swapped
+                        else:
+                            # No previous frame yet — use raw (can't be helped on first frame)
+                            swapped = frame.copy()
                 else:
                     swapped = frame.copy()
 
-                self._last_swapped_frame = swapped
                 if self._vcam_active:
                     self.virtual_cam.send_frame(swapped)
 
                 latency = (time.perf_counter() - start_time) * 1000
-                fps = fps_counter.tick()
+                fps     = fps_counter.tick()
                 self.frames_ready.emit(frame, swapped)
 
                 if self._frame_count % 30 == 0:
                     self.fps_updated.emit(fps)
                     self.latency_updated.emit(latency)
 
-                # Memory management — collect every 100 frames
+                # Memory management
                 if loop_count % 100 == 0:
                     gc.collect()
 
-                # Auto-tune — record fps every frame, tune every 60
+                # Auto-tune
                 if self.auto_tune_enabled and self._perf_tuner:
                     self._perf_tuner.record_fps(fps)
                     if self._frame_count % 60 == 0:
@@ -297,9 +349,6 @@ class EchelonPipeline(QThread):
             self._vcam_active = False
             self.swap_engine.unload()
             self.status_changed.emit("Stopped")
-
-    def _scale_frame(self, frame, w, h):
-        return cv2.resize(frame, (w, h))
 
     def stop(self):
         self._running = False

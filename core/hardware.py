@@ -25,58 +25,91 @@ class HardwareDetector:
     def detect(self) -> HardwareInfo:
         info = HardwareInfo()
 
-        # RAM
         mem = psutil.virtual_memory()
         info.ram_gb = mem.total / (1024 ** 3)
-
-        # CPU cores
         info.cpu_cores = psutil.cpu_count(logical=True) or 1
-
-        # CPU name — platform-aware
         info.cpu_name = self._get_cpu_name()
 
-        # ONNX providers
-        try:
-            import onnxruntime as ort
-            providers = ort.get_available_providers()
-            if "CUDAExecutionProvider" in providers:
-                info.has_cuda = True
-                info.has_gpu = True
-                info.onnx_providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            else:
-                info.onnx_providers = ["CPUExecutionProvider"]
-        except Exception:
-            info.onnx_providers = ["CPUExecutionProvider"]
+        # ── Auto-detect best ONNX execution provider ──────────────────────────
+        info.onnx_providers = self._detect_providers(info)
 
-        # GPU info via nvidia-smi
-        if info.has_cuda:
-            try:
-                result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name,memory.total",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if result.returncode == 0:
-                    parts = result.stdout.strip().split(",")
-                    if len(parts) >= 2:
-                        info.gpu_name = parts[0].strip()
-                        info.gpu_vram_gb = int(parts[1].strip()) / 1024
-                        info.has_gpu = True
-            except Exception:
-                pass
+        # Determine if we have a usable GPU
+        has_cuda     = any("CUDA"     in p for p in info.onnx_providers)
+        has_directml = any("DirectML" in p for p in info.onnx_providers)
+        has_coreml   = any("CoreML"   in p for p in info.onnx_providers)
 
-        # Recommended mode
-        if info.has_cuda and info.gpu_vram_gb >= 4:
+        info.has_cuda = has_cuda
+        info.has_gpu  = has_cuda or has_directml or has_coreml
+
+        # GPU details from nvidia-smi (CUDA only)
+        if has_cuda:
+            info.gpu_name, info.gpu_vram_gb = self._nvidia_info()
+
+        # Recommended performance mode
+        if has_cuda and info.gpu_vram_gb >= 4:
             info.recommended_mode = "quality"
-        elif info.has_cuda or info.ram_gb >= 16:
+        elif info.has_gpu or info.ram_gb >= 16:
             info.recommended_mode = "balanced"
         else:
             info.recommended_mode = "speed"
 
         return info
 
+    def _detect_providers(self, info: HardwareInfo) -> List[str]:
+        """Return ordered list of ONNX providers — best first."""
+        try:
+            import onnxruntime as ort
+            available = ort.get_available_providers()
+        except Exception:
+            return ["CPUExecutionProvider"]
+
+        providers = []
+
+        # 1. NVIDIA CUDA — fastest, requires CUDA toolkit
+        if "CUDAExecutionProvider" in available:
+            providers.append("CUDAExecutionProvider")
+            logger.info("GPU: NVIDIA CUDA detected")
+
+        # 2. DirectML — works on ANY GPU on Windows (AMD, Intel, Nvidia)
+        elif "DmlExecutionProvider" in available:
+            providers.append("DmlExecutionProvider")
+            logger.info("GPU: DirectML detected (Windows GPU acceleration)")
+
+        # 3. Apple CoreML — macOS Apple Silicon & Intel GPU
+        elif "CoreMLExecutionProvider" in available:
+            providers.append("CoreMLExecutionProvider")
+            logger.info("GPU: Apple CoreML detected")
+
+        # 4. ROCm — AMD GPU on Linux
+        elif "ROCMExecutionProvider" in available:
+            providers.append("ROCMExecutionProvider")
+            logger.info("GPU: AMD ROCm detected")
+
+        # Always include CPU as fallback
+        providers.append("CPUExecutionProvider")
+
+        if len(providers) == 1:
+            logger.info("No GPU acceleration available — using CPU")
+
+        return providers
+
+    def _nvidia_info(self):
+        """Get NVIDIA GPU name and VRAM via nvidia-smi."""
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(",")
+                if len(parts) >= 2:
+                    return parts[0].strip(), int(parts[1].strip()) / 1024
+        except Exception:
+            pass
+        return "NVIDIA GPU", 0.0
+
     def _get_cpu_name(self) -> str:
-        """Get CPU name — works on Windows, Linux, and macOS."""
         try:
             if sys.platform == "win32":
                 import winreg
@@ -95,7 +128,6 @@ class HardwareDetector:
                 if result.returncode == 0:
                     return result.stdout.strip()
             else:
-                # Linux — read /proc/cpuinfo
                 with open("/proc/cpuinfo") as f:
                     for line in f:
                         if "model name" in line:
@@ -107,8 +139,7 @@ class HardwareDetector:
     def log_system_info(self, info: HardwareInfo):
         logger.info(f"RAM: {info.ram_gb:.1f} GB")
         logger.info(f"CPU: {info.cpu_name} ({info.cpu_cores} cores)")
-        logger.info(f"CUDA: {info.has_cuda}")
-        if info.has_gpu:
+        logger.info(f"GPU acceleration: {info.has_gpu} | Providers: {info.onnx_providers}")
+        if info.has_gpu and info.gpu_name:
             logger.info(f"GPU: {info.gpu_name} ({info.gpu_vram_gb:.1f} GB VRAM)")
-        logger.info(f"ONNX providers: {info.onnx_providers}")
         logger.info(f"Recommended mode: {info.recommended_mode}")
