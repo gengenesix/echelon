@@ -1,4 +1,4 @@
-name: Build Echelon — Windows, Linux & macOS
+name: Build Echelon - Windows, Linux & macOS
 
 on:
   push:
@@ -6,10 +6,13 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
 
   # ═══════════════════════════════════════════
-  # WINDOWS — .exe installer via NSIS
+  # WINDOWS - .exe installer via NSIS
   # ═══════════════════════════════════════════
   build-windows:
     runs-on: windows-latest
@@ -113,7 +116,7 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════
-  # LINUX — AppImage + .deb
+  # LINUX - AppImage + .deb
   # ═══════════════════════════════════════════
   build-linux:
     runs-on: ubuntu-22.04
@@ -193,7 +196,7 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════
-  # macOS — Universal Binary (Intel + Apple Silicon)
+  # macOS - Universal Binary (Intel + Apple Silicon)
   # Strategy: build arm64 on macos-latest, x86_64 on macos-13,
   # then merge with lipo into a Universal Binary .dmg
   # ═══════════════════════════════════════════
@@ -258,6 +261,7 @@ jobs:
 
   build-macos-x86_64:
     runs-on: macos-13       # Intel (x86_64)
+    continue-on-error: true  # Don't block release if Intel runner unavailable
     steps:
       - uses: actions/checkout@v4.2.2
 
@@ -329,6 +333,7 @@ jobs:
 
       - name: Download x86_64 build
         uses: actions/download-artifact@v4.3.0
+        continue-on-error: true   # x86_64 runner may be unavailable - fall back to arm64 only
         with:
           name: Echelon-macOS-x86_64
           path: Echelon-x86_64.app
@@ -355,14 +360,19 @@ jobs:
           echo "arm64 binary: $(file $ARM_BIN)"
           echo "x86_64 binary: $(file $X86_BIN)"
 
-          lipo -create -output "$UNI_BIN" "$ARM_BIN" "$X86_BIN" && \
-            echo "lipo merge OK: $(file $UNI_BIN)" || \
-            echo "lipo merge failed — using arm64 only (still works on Apple Silicon)"
+          if [ -f "$X86_BIN" ]; then
+            lipo -create -output "$UNI_BIN" "$ARM_BIN" "$X86_BIN" && \
+              echo "Universal Binary created: $(file $UNI_BIN)" || \
+              { echo "lipo failed - using arm64 only"; cp "$ARM_BIN" "$UNI_BIN"; }
+          else
+            echo "x86_64 build not available - using arm64 only (Apple Silicon native)"
+            cp "$ARM_BIN" "$UNI_BIN"
+          fi
 
           # Verify and fix Info.plist
           PLIST="$UNI_APP/Contents/Info.plist"
           if [ -f "$PLIST" ]; then
-            # Fix LSMinimumSystemVersion — must be 10.15, never higher
+            # Fix LSMinimumSystemVersion - must be 10.15, never higher
             /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$PLIST" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 10.15" "$PLIST" 2>/dev/null || true
             # Ensure CFBundleIdentifier is correct
@@ -399,7 +409,7 @@ jobs:
         run: |
           [ -f "Echelon-macOS.dmg" ] || { echo "ERROR: DMG missing"; exit 1; }
           SIZE=$(du -sh Echelon-macOS.dmg | cut -f1)
-          echo "Echelon-macOS.dmg: $SIZE — OK"
+          echo "Echelon-macOS.dmg: $SIZE - OK"
 
       - name: Upload macOS .dmg
         uses: actions/upload-artifact@v4.6.2
@@ -409,7 +419,7 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════
-  # RELEASE — publish to GitHub Releases
+  # RELEASE - publish to GitHub Releases
   # ═══════════════════════════════════════════
   create-release:
     needs: [build-windows, build-linux, build-macos]
@@ -445,7 +455,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2.2.1
         with:
-          name: "Echelon ${{ github.ref_name }} — by Zero"
+          name: "Echelon ${{ github.ref_name }} - by Zero"
           body: |
             ## ⚡ Echelon ${{ github.ref_name }}
             **Real-time face swap for video calls. Created by Zero.**
@@ -457,22 +467,22 @@ jobs:
             | Platform | File | Notes |
             |---|---|---|
             | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
-            | 🍎 **macOS** | `Echelon-macOS.dmg` | Universal Binary — works on Intel & Apple Silicon |
+            | 🍎 **macOS** | `Echelon-macOS.dmg` | Universal Binary - works on Intel & Apple Silicon |
             | 🐧 **Linux (any)** | `Echelon-x86_64.AppImage` | `chmod +x` then double-click |
             | 🐧 **Ubuntu/Debian** | `echelon_2.3.0_amd64.deb` | `sudo dpkg -i echelon_2.3.0_amd64.deb` |
 
             ---
 
-            ## 🍎 macOS — First Launch Fix
+            ## 🍎 macOS - First Launch Fix
 
             macOS blocks unsigned apps by default. **Two options:**
 
-            **Option A — Easy (one time):**
+            **Option A - Easy (one time):**
             ```bash
             xattr -rd com.apple.quarantine /Applications/Echelon.app
             ```
 
-            **Option B — Right-click method:**
+            **Option B - Right-click method:**
             Right-click `Echelon.app` → **Open** → click **Open** in the dialog. Done.
 
             > This is normal for free apps without Apple Developer notarization ($99/year). Safe to use.
