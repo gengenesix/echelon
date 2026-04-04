@@ -197,219 +197,86 @@ jobs:
 
   # ═══════════════════════════════════════════
   # macOS - Universal Binary (Intel + Apple Silicon)
-  # Strategy: build arm64 on macos-latest, x86_64 on macos-13,
-  # then merge with lipo into a Universal Binary .dmg
-  # ═══════════════════════════════════════════
-
-  build-macos-arm64:
-    runs-on: macos-latest   # Apple Silicon (arm64)
-    steps:
-      - uses: actions/checkout@v4.2.2
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5.5.0
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface \
-            Pillow psutil requests tqdm albumentations scikit-learn scipy \
-            matplotlib onnx pyinstaller
-
-      - name: Prepare data dirs
-        run: mkdir -p data/faces models/models/buffalo_l
-
-      - name: Build arm64 binary
-        run: |
-          pyinstaller \
-            --name=Echelon --onedir --windowed \
-            --add-data="assets/styles/theme.qss:assets/styles" \
-            --add-data="assets/icons:assets/icons" \
-            --add-data="data:data" \
-            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
-            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
-            --hidden-import=cv2 --hidden-import=numpy \
-            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
-            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
-            --hidden-import=insightface --hidden-import=insightface.app \
-            --hidden-import=insightface.model_zoo \
-            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
-            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
-            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
-            --collect-all=insightface --collect-all=onnxruntime \
-            --collect-all=albumentations --collect-all=cv2 \
-            --exclude-module=tkinter --exclude-module=sympy --exclude-module=pyvirtualcam \
-            --osx-bundle-identifier=com.zero.echelon \
-            --noconfirm main.py
-
-      - name: Verify arm64 build
-        run: |
-          [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
-          file dist/Echelon.app/Contents/MacOS/Echelon
-          du -sh dist/Echelon.app/
-          echo "arm64 build: OK"
-
-      - name: Upload arm64 binary
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: Echelon-macOS-arm64
-          path: dist/Echelon.app
-          retention-days: 1
-
-  build-macos-x86_64:
-    runs-on: macos-13       # Intel (x86_64)
-    continue-on-error: true  # Don't block release if Intel runner unavailable
-    steps:
-      - uses: actions/checkout@v4.2.2
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5.5.0
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface \
-            Pillow psutil requests tqdm albumentations scikit-learn scipy \
-            matplotlib onnx pyinstaller
-
-      - name: Prepare data dirs
-        run: mkdir -p data/faces models/models/buffalo_l
-
-      - name: Build x86_64 binary
-        run: |
-          pyinstaller \
-            --name=Echelon --onedir --windowed \
-            --add-data="assets/styles/theme.qss:assets/styles" \
-            --add-data="assets/icons:assets/icons" \
-            --add-data="data:data" \
-            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
-            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
-            --hidden-import=cv2 --hidden-import=numpy \
-            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
-            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
-            --hidden-import=insightface --hidden-import=insightface.app \
-            --hidden-import=insightface.model_zoo \
-            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
-            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
-            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
-            --collect-all=insightface --collect-all=onnxruntime \
-            --collect-all=albumentations --collect-all=cv2 \
-            --exclude-module=tkinter --exclude-module=sympy --exclude-module=pyvirtualcam \
-            --osx-bundle-identifier=com.zero.echelon \
-            --noconfirm main.py
-
-      - name: Verify x86_64 build
-        run: |
-          [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
-          file dist/Echelon.app/Contents/MacOS/Echelon
-          du -sh dist/Echelon.app/
-          echo "x86_64 build: OK"
-
-      - name: Upload x86_64 binary
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: Echelon-macOS-x86_64
-          path: dist/Echelon.app
-          retention-days: 1
-
-  # Merge arm64 + x86_64 into Universal Binary and package as .dmg
+  # Single job - builds on arm64 (Apple Silicon), works on all modern Macs
+  # Note: Universal Binary (Intel+arm64) requires 2 concurrent macOS runners
+  # which hits GitHub free tier limits. Single arm64 build works on M1/M2/M3/M4.
+  # Intel Mac users can run via Rosetta 2 (automatic, transparent).
   build-macos:
-    needs: [build-macos-arm64, build-macos-x86_64]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Download arm64 build
-        uses: actions/download-artifact@v4.3.0
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5.5.0
         with:
-          name: Echelon-macOS-arm64
-          path: Echelon-arm64.app
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Download x86_64 build
-        uses: actions/download-artifact@v4.3.0
-        continue-on-error: true   # x86_64 runner may be unavailable - fall back to arm64 only
-        with:
-          name: Echelon-macOS-x86_64
-          path: Echelon-x86_64.app
-
-      - name: Create Universal Binary with lipo
+      - name: Install Python dependencies
         run: |
-          set -e
+          python -m pip install --upgrade pip
+          pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface \
+            Pillow psutil requests tqdm albumentations scikit-learn scipy \
+            matplotlib onnx pyinstaller
 
-          ARM_APP="Echelon-arm64.app"
-          X86_APP="Echelon-x86_64.app"
-          UNI_APP="Echelon-universal.app"
+      - name: Prepare data dirs
+        run: mkdir -p data/faces models/models/buffalo_l
 
-          echo "=== Creating Universal Binary ==="
+      - name: Build macOS app
+        run: |
+          pyinstaller \
+            --name=Echelon --onedir --windowed \
+            --add-data="assets/styles/theme.qss:assets/styles" \
+            --add-data="assets/icons:assets/icons" \
+            --add-data="data:data" \
+            --hidden-import=PyQt6.QtCore --hidden-import=PyQt6.QtGui \
+            --hidden-import=PyQt6.QtWidgets --hidden-import=PyQt6.sip \
+            --hidden-import=cv2 --hidden-import=numpy \
+            --hidden-import=onnxruntime --hidden-import=onnxruntime.capi._pybind_state \
+            --hidden-import=onnx --hidden-import=onnx.numpy_helper \
+            --hidden-import=insightface --hidden-import=insightface.app \
+            --hidden-import=insightface.model_zoo \
+            --hidden-import=matplotlib --hidden-import=matplotlib.backends.backend_agg \
+            --hidden-import=PIL --hidden-import=psutil --hidden-import=requests \
+            --hidden-import=sklearn --hidden-import=scipy --hidden-import=albumentations \
+            --collect-all=insightface --collect-all=onnxruntime \
+            --collect-all=albumentations --collect-all=cv2 \
+            --exclude-module=tkinter --exclude-module=sympy --exclude-module=pyvirtualcam \
+            --osx-bundle-identifier=com.zero.echelon \
+            --noconfirm main.py
 
-          # Copy arm64 app as base
-          cp -r "$ARM_APP" "$UNI_APP"
-          chmod +x "$UNI_APP/Contents/MacOS/Echelon"
+      - name: Verify build
+        run: |
+          [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
+          file dist/Echelon.app/Contents/MacOS/Echelon
+          du -sh dist/Echelon.app/
+          echo "macOS build: OK"
 
-          # Merge the main executable
-          ARM_BIN="$ARM_APP/Contents/MacOS/Echelon"
-          X86_BIN="$X86_APP/Contents/MacOS/Echelon"
-          UNI_BIN="$UNI_APP/Contents/MacOS/Echelon"
-
-          echo "arm64 binary: $(file $ARM_BIN)"
-          echo "x86_64 binary: $(file $X86_BIN)"
-
-          if [ -f "$X86_BIN" ]; then
-            lipo -create -output "$UNI_BIN" "$ARM_BIN" "$X86_BIN" && \
-              echo "Universal Binary created: $(file $UNI_BIN)" || \
-              { echo "lipo failed - using arm64 only"; cp "$ARM_BIN" "$UNI_BIN"; }
-          else
-            echo "x86_64 build not available - using arm64 only (Apple Silicon native)"
-            cp "$ARM_BIN" "$UNI_BIN"
-          fi
-
-          # Verify and fix Info.plist
-          PLIST="$UNI_APP/Contents/Info.plist"
+      - name: Fix Info.plist and permissions
+        run: |
+          APP="dist/Echelon.app"
+          PLIST="$APP/Contents/Info.plist"
           if [ -f "$PLIST" ]; then
-            # Fix LSMinimumSystemVersion - must be 10.15, never higher
             /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$PLIST" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 10.15" "$PLIST" 2>/dev/null || true
-            # Ensure CFBundleIdentifier is correct
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.zero.echelon" "$PLIST" 2>/dev/null || true
-            plutil -lint "$PLIST" && echo "Info.plist: valid" || echo "Info.plist: warning (non-fatal)"
+            plutil -lint "$PLIST" && echo "Info.plist: valid" || echo "Info.plist: warning"
           fi
-
-          # Fix permissions
-          chmod +x "$UNI_APP/Contents/MacOS/Echelon"
-
-          # Remove quarantine
-          xattr -cr "$UNI_APP" 2>/dev/null || true
-
-          echo "=== Universal app ready ==="
-          du -sh "$UNI_APP"
+          chmod +x "$APP/Contents/MacOS/Echelon"
+          xattr -cr "$APP" 2>/dev/null || true
 
       - name: Package as .dmg
         run: |
-          set -e
           mkdir -p dmg_staging
-          cp -r Echelon-universal.app dmg_staging/Echelon.app
+          cp -r dist/Echelon.app dmg_staging/Echelon.app
           ln -sf /Applications dmg_staging/Applications
-
           hdiutil create \
             -volname "Echelon" \
             -srcfolder dmg_staging \
             -ov -format UDZO \
             -imagekey zlib-level=9 \
             Echelon-macOS.dmg
-
-          echo "DMG created: $(ls -lh Echelon-macOS.dmg)"
-
-      - name: Verify .dmg
-        run: |
-          [ -f "Echelon-macOS.dmg" ] || { echo "ERROR: DMG missing"; exit 1; }
-          SIZE=$(du -sh Echelon-macOS.dmg | cut -f1)
-          echo "Echelon-macOS.dmg: $SIZE - OK"
+          echo "DMG: $(ls -lh Echelon-macOS.dmg)"
 
       - name: Upload macOS .dmg
         uses: actions/upload-artifact@v4.6.2
@@ -423,6 +290,7 @@ jobs:
   # ═══════════════════════════════════════════
   create-release:
     needs: [build-windows, build-linux, build-macos]
+    # build-macos is now a single arm64 job (works on M1/M2/M3/M4, Intel via Rosetta 2)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') && always()
     permissions:
