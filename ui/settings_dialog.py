@@ -266,46 +266,37 @@ class SettingsDialog(QDialog):
 
     def _refresh_model_status(self):
         from models.downloader import ModelDownloader
-        dl           = ModelDownloader(self.config.models_dir)
-        inswapper_ok = dl._inswapper_ok()
-        buffalo_ok   = dl._buffalo_ok()
+        dl            = ModelDownloader(self.config.models_dir)
+        inswapper_ok  = dl._inswapper_ok()
+        buffalo_ok    = dl._buffalo_ok()
         codeformer_ok = dl._codeformer_ok()
         ghost_ok      = dl._ghost_ok()
+        esrgan_ok     = dl._real_esrgan_ok()
 
-        if inswapper_ok and buffalo_ok:
-            extras = []
-            if not codeformer_ok:
-                extras.append("CodeFormer (enhancer)")
-            if not ghost_ok:
-                extras.append("ghost-unet (better swap)")
-            if extras:
-                self._model_status_lbl.setText(
-                    "✅ Core models ready.\n"
-                    f"Optional quality models missing: {', '.join(extras)}\n"
-                    "Click 'Download Models' to get them."
-                )
-                self._model_status_lbl.setStyleSheet("color: #FFB547; font-size: 12px;")
-            else:
-                self._model_status_lbl.setText("✅ All models present — best quality active.")
-                self._model_status_lbl.setStyleSheet("color: #22D98F; font-size: 12px;")
-            self._dl_btn.setText("Download Optional Models")
+        missing = []
+        if not inswapper_ok:  missing.append("inswapper_128.onnx")
+        if not buffalo_ok:    missing.append("buffalo_l")
+        if not ghost_ok:      missing.append("ghost-unet")
+        if not codeformer_ok: missing.append("CodeFormer")
+        if not esrgan_ok:     missing.append("Real-ESRGAN")
+
+        if not missing:
+            self._model_status_lbl.setText("✅ All models present — best quality active.")
+            self._model_status_lbl.setStyleSheet("color: #22D98F; font-size: 12px;")
         else:
-            missing = []
-            if not inswapper_ok:
-                missing.append("inswapper_128.onnx")
-            if not buffalo_ok:
-                missing.append("buffalo_l detection files")
             self._model_status_lbl.setText(
-                f"⚠️  Missing: {', '.join(missing)}\n"
-                "Click 'Download Models' or install manually below."
+                f"Missing: {', '.join(missing)}\n"
+                "Click Download All Models — already-present files are skipped automatically."
             )
-            self._model_status_lbl.setStyleSheet("color: #FFB547; font-size: 12px;")
-            self._dl_btn.setText("Download Models")
+            color = "#FF6B6B" if (not inswapper_ok or not buffalo_ok) else "#FFB547"
+            self._model_status_lbl.setStyleSheet(f"color: {color}; font-size: 12px;")
 
-        self._inswapper_status.setText("✅" if inswapper_ok   else "❌")
-        self._buffalo_status.setText("✅"   if buffalo_ok      else "❌")
-        self._codeformer_status.setText("✅" if codeformer_ok  else "❌")
-        self._ghost_status.setText("✅"      if ghost_ok        else "❌")
+        self._dl_btn.setText("Download All Models")
+
+        self._inswapper_status.setText("✅" if inswapper_ok  else "❌")
+        self._buffalo_status.setText("✅"   if buffalo_ok     else "❌")
+        self._codeformer_status.setText("✅" if codeformer_ok else "❌")
+        self._ghost_status.setText("✅"     if ghost_ok       else "❌")
         self._models_dir_lbl.setText(f"Models folder: {self.config.models_dir}")
 
     # ── Auto download ─────────────────────────────────────────────────────────

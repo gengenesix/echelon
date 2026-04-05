@@ -36,8 +36,11 @@ REAL_ESRGAN_URLS = [
 REAL_ESRGAN_MIN_BYTES = 20 * 1024 * 1024  # ~34 MB
 
 GHOST_UNET_URLS = [
-    f"{_FF34}/ghost_unet_2blocks.onnx",    # ~25 MB — models-3.4.0 tag
-    f"{_FF3}/ghost_unet_2blocks.onnx",     # fallback — models-3.0.0 tag
+    f"{_FF34}/ghost_unet_2blocks.onnx",
+    f"{_FF3}/ghost_unet_2blocks.onnx",
+    "https://github.com/facefusion/facefusion-assets/releases/download/models/ghost_unet_2blocks.onnx",
+    f"{_HF_INS}/netrunner-exe/Insight-Swap-models/resolve/main/ghost_unet_2blocks.onnx",
+    f"{_HF_INS}/facefusion/facefusion-assets/resolve/main/models/ghost_unet_2blocks.onnx",
 ]
 GHOST_UNET_MIN_BYTES = 10 * 1024 * 1024   # ~25 MB
 

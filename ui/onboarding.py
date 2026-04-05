@@ -58,8 +58,8 @@ class OnboardingDialog(QDialog):
 
         # Model row
         self._model_row = self._make_check_row(
-            "AI Models (Face Swap + Detection)",
-            "inswapper_128.onnx + buffalo_l (~600 MB total, one-time)"
+            "AI Models — all 5 models",
+            "swap + detection + ghost-unet + CodeFormer + Real-ESRGAN (~950 MB, one-time)"
         )
         self._progress = QProgressBar()
         self._progress.setVisible(False)
@@ -180,7 +180,14 @@ class OnboardingDialog(QDialog):
 
     # ── Model ────────────────────────────────────────
     def _models_ready(self) -> bool:
-        """Check that BOTH inswapper AND buffalo_l detection models exist and are valid size."""
+        """All 5 models present — required (inswapper + buffalo) plus optional quality models."""
+        from models.downloader import ModelDownloader
+        dl = ModelDownloader(self.config.models_dir)
+        return (dl._inswapper_ok() and dl._buffalo_ok() and
+                dl._ghost_ok() and dl._codeformer_ok() and dl._real_esrgan_ok())
+
+    def _core_models_ready(self) -> bool:
+        """Minimum needed to run: inswapper + buffalo."""
         from models.downloader import ModelDownloader
         dl = ModelDownloader(self.config.models_dir)
         return dl._inswapper_ok() and dl._buffalo_ok()
@@ -188,18 +195,17 @@ class OnboardingDialog(QDialog):
     def _check_model(self):
         from models.downloader import ModelDownloader
         row = self._model_row
+        dl = ModelDownloader(self.config.models_dir)
         if self._models_ready():
-            self._set_row_ok(row, "All AI models ready (face swap + detection) ✓")
+            self._set_row_ok(row, "All 5 AI models ready ✓")
         else:
-            dl = ModelDownloader(self.config.models_dir)
-            inswapper_ok = dl._inswapper_ok()
-            buffalo_ok = dl._buffalo_ok()
-            if not inswapper_ok and not buffalo_ok:
-                desc = "Models needed: inswapper_128.onnx + buffalo_l (~600 MB, one-time download)"
-            elif not inswapper_ok:
-                desc = "Missing: inswapper_128.onnx (~554 MB face swap model)"
-            else:
-                desc = "Missing or incomplete: buffalo_l detection models (~46 MB)"
+            missing = []
+            if not dl._inswapper_ok():  missing.append("inswapper_128.onnx")
+            if not dl._buffalo_ok():    missing.append("buffalo_l")
+            if not dl._ghost_ok():      missing.append("ghost-unet")
+            if not dl._codeformer_ok(): missing.append("CodeFormer")
+            if not dl._real_esrgan_ok(): missing.append("Real-ESRGAN")
+            desc = f"Missing: {', '.join(missing)}"
             self._set_row_fail(row, desc)
             self._connect_btn(row["btn"], self._download_model)
             row["btn"].setText("Download All")
@@ -271,7 +277,7 @@ class OnboardingDialog(QDialog):
         btn.clicked.connect(slot)
 
     def _update_continue(self):
-        model_ok = self._models_ready()
+        model_ok = self._core_models_ready()
         cap = cv2.VideoCapture(0)
         cam_ok = cap.isOpened()
         cap.release()
