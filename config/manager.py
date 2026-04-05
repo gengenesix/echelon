@@ -28,8 +28,8 @@ class AppConfig:
     performance_mode: str = "balanced"
     camera_device_id: int = 0
     virtual_camera_device: str = field(default_factory=_default_virtual_camera_device)
-    output_width: int = 1280
-    output_height: int = 720
+    output_width: int = 640
+    output_height: int = 480
     output_fps: int = 30
     active_source_face_path: str = ""
     window_x: int = 100

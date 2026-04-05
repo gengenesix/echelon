@@ -1,6 +1,12 @@
 """
 Face swap inference engine using inswapper_128.onnx
 Based on FaceFusion's actual inference pipeline.
+
+v2.5 improvements:
+ - warmup(): one dummy inference to JIT-compile ONNX graph before real use
+ - prepare_source(): pre-compute the 512×512 matrix multiply ONCE per source
+   face instead of every single frame — eliminates a ~0.5ms per-frame cost
+ - _cached_source_embedding: reused across all frames while source is unchanged
 """
 import cv2
 import numpy as np
@@ -27,16 +33,20 @@ ARCFACE_128_TEMPLATE = np.array([
 
 class FaceSwapEngine:
     def __init__(self, model_path: str, providers: list):
-        self.session = None
-        self.model_path = model_path
-        self.providers = providers
-        self.is_loaded = False
-        self.input_size = (128, 128)
-        self._input_name = None
-        self._output_name = None
-        self._source_name = None
-        self._model_initializer = None
-        self._transform_buffer = collections.deque(maxlen=3)
+        self.session              = None
+        self.model_path           = model_path
+        self.providers            = providers
+        self.is_loaded            = False
+        self.input_size           = (128, 128)
+        self._input_name          = None
+        self._output_name         = None
+        self._source_name         = None
+        self._model_initializer   = None
+        self._transform_buffer    = collections.deque(maxlen=3)
+        # Pre-computed source embedding — updated once per source face change
+        self._cached_source_embedding: Optional[np.ndarray] = None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def load(self) -> bool:
         import onnxruntime as ort
@@ -46,17 +56,17 @@ class FaceSwapEngine:
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             opts.inter_op_num_threads = 2
             opts.intra_op_num_threads = 4
-            opts.enable_mem_pattern = True
+            opts.enable_mem_pattern   = True
             opts.enable_cpu_mem_arena = True
             self.session = ort.InferenceSession(
                 self.model_path, sess_options=opts, providers=self.providers
             )
             inputs = self.session.get_inputs()
-            self._input_name = inputs[0].name   # 'target' — shape [1,3,128,128]
-            self._source_name = inputs[1].name   # 'source' — shape [1,512]
+            self._input_name  = inputs[0].name   # 'target' — [1,3,128,128]
+            self._source_name = inputs[1].name   # 'source' — [1,512]
             self._output_name = self.session.get_outputs()[0].name
 
-            # Load model initializer matrix for inswapper embedding transformation
+            # Load model initializer for inswapper embedding transformation
             try:
                 model = onnx.load(self.model_path)
                 self._model_initializer = onnx.numpy_helper.to_array(
@@ -77,6 +87,55 @@ class FaceSwapEngine:
             logger.error(f"FaceSwapEngine load failed: {e}")
             return False
 
+    def warmup(self) -> None:
+        """
+        Run one dummy inference to JIT-compile the ONNX graph.
+        Call this once after load() and BEFORE the first real swap_face() call.
+        Eliminates the 3-10× latency spike on the very first real frame.
+        """
+        if not self.is_loaded or self.session is None:
+            return
+        try:
+            t0 = time.time()
+            dummy_target = np.zeros((1, 3, 128, 128), dtype=np.float32)
+            dummy_source = np.zeros((1, 512),          dtype=np.float32)
+            self.session.run(
+                [self._output_name],
+                {self._input_name: dummy_target, self._source_name: dummy_source},
+            )
+            logger.info(f"Swap engine warmup complete in {time.time()-t0:.2f}s")
+        except Exception as e:
+            logger.warning(f"Warmup failed (non-critical): {e}")
+
+    def prepare_source(self, source_face: DetectedFace) -> None:
+        """
+        Pre-compute and cache the transformed source embedding.
+        Call this ONCE whenever the source face changes instead of repeating
+        the 512×512 matrix multiply on every single frame.
+        """
+        try:
+            embedding = source_face.embedding.reshape((1, -1)).astype(np.float32)
+            if self._model_initializer is not None:
+                embedding = np.dot(embedding, self._model_initializer)
+                norm = np.linalg.norm(embedding)
+                if norm > 0:
+                    embedding = embedding / norm
+            self._cached_source_embedding = embedding
+            logger.debug("Source embedding cached")
+        except Exception as e:
+            logger.warning(f"prepare_source failed: {e}")
+            self._cached_source_embedding = None
+
+    def unload(self) -> None:
+        self.session                  = None
+        self._model_initializer       = None
+        self._cached_source_embedding = None
+        self.is_loaded                = False
+        self._transform_buffer.clear()
+        gc.collect()
+
+    # ── Inference ─────────────────────────────────────────────────────────────
+
     def swap_face(
         self,
         target_frame: np.ndarray,
@@ -86,38 +145,43 @@ class FaceSwapEngine:
         if not self.is_loaded or self.session is None:
             return target_frame
         try:
-            # Step 1: Warp target face using arcface_128 template
+            # Step 1: Warp target face to arcface_128 template
             crop_frame, affine_matrix = self._warp_face(
                 target_frame, target_face.landmarks
             )
 
-            # Temporal smoothing: buffer affine matrices and use smoothed version
+            # Temporal smoothing: buffer affine matrices, use mean
             self._transform_buffer.append(affine_matrix)
             smoothed_matrix = np.mean(list(self._transform_buffer), axis=0)
 
-            # Step 2: Prepare crop frame for inference (BGR→RGB, /255, transpose)
+            # Step 2: Prepare crop for inference
             crop_input = self._prepare_crop_frame(crop_frame)
 
-            # Step 3: Prepare source embedding (dot with model initializer)
-            source_embedding = self._prepare_source_embedding(source_face.embedding)
+            # Step 3: Use cached source embedding (pre-computed once per face change)
+            if self._cached_source_embedding is not None:
+                source_embedding = self._cached_source_embedding
+            else:
+                # Fallback: compute on the fly (slower path, only if prepare_source
+                # was never called, e.g. pipeline restarted mid-session)
+                source_embedding = self._prepare_source_embedding(source_face.embedding)
 
-            # Step 4: Run ONNX inference
+            # Step 4: ONNX inference
             feed = {
-                self._input_name: crop_input,
+                self._input_name:  crop_input,
                 self._source_name: source_embedding,
             }
             output = self.session.run([self._output_name], feed)[0][0]
 
-            # Step 5: Normalize output back to image
+            # Step 5: Normalise output back to image
             swapped_crop = self._normalize_crop_frame(output)
 
-            # Step 6: Create face mask for blending
+            # Step 6: Soft elliptical blend mask
             crop_mask = self._create_box_mask(swapped_crop)
 
-            # Step 6b: Color-correct swapped face to match original face skin tone
+            # Step 6b: Colour-correct swapped face to match target skin tone
             swapped_crop = self._color_transfer(swapped_crop, crop_frame, crop_mask)
 
-            # Step 7: Paste back onto original frame using smoothed affine matrix
+            # Step 7: Paste back using smoothed affine
             result = self._paste_back(
                 target_frame, swapped_crop, crop_mask, smoothed_matrix
             )
@@ -127,95 +191,78 @@ class FaceSwapEngine:
             logger.error(f"swap_face error: {e}", exc_info=True)
             return target_frame
 
+    # ── Private helpers ───────────────────────────────────────────────────────
+
     def _warp_face(
         self, frame: np.ndarray, landmarks: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Warp face region using arcface_128 template alignment."""
         src_pts = landmarks.astype(np.float32)
-        # Scale template to crop size
         dst_pts = ARCFACE_128_TEMPLATE * np.array(
             [self.input_size[0], self.input_size[1]], dtype=np.float32
         )
-
-        # Estimate affine transform
         affine_matrix = cv2.estimateAffinePartial2D(
             src_pts, dst_pts, method=cv2.LMEDS
         )[0]
         if affine_matrix is None:
             affine_matrix = np.eye(2, 3, dtype=np.float32)
-
         crop_frame = cv2.warpAffine(
-            frame,
-            affine_matrix,
-            self.input_size,
+            frame, affine_matrix, self.input_size,
             borderMode=cv2.BORDER_REPLICATE,
             flags=cv2.INTER_AREA,
         )
         return crop_frame, affine_matrix
 
     def _prepare_crop_frame(self, crop_frame: np.ndarray) -> np.ndarray:
-        """Prepare crop frame for inswapper: BGR→RGB, /255, CHW, batch."""
-        # inswapper uses mean=[0,0,0] std=[1,1,1]
         frame = crop_frame[:, :, ::-1].astype(np.float32) / 255.0
         frame = frame.transpose(2, 0, 1)
-        frame = np.expand_dims(frame, axis=0)
-        return frame
+        return np.expand_dims(frame, axis=0)
 
     def _prepare_source_embedding(self, embedding: np.ndarray) -> np.ndarray:
-        """Transform source embedding using model initializer matrix."""
+        """Fallback: compute embedding transform on the fly (used when
+        prepare_source() was never called)."""
         source_embedding = embedding.reshape((1, -1)).astype(np.float32)
-
         if self._model_initializer is not None:
-            # This is the critical inswapper step: dot product with model initializer
             source_embedding = np.dot(source_embedding, self._model_initializer)
             norm = np.linalg.norm(source_embedding)
             if norm > 0:
                 source_embedding = source_embedding / norm
-
         return source_embedding
 
     def _normalize_crop_frame(self, output: np.ndarray) -> np.ndarray:
-        """Convert model output back to BGR uint8 image."""
-        # output shape: (3, 128, 128)
         frame = output.transpose(1, 2, 0)
         frame = np.clip(frame, 0, 1)
-        # RGB→BGR
         frame = frame[:, :, ::-1] * 255
         return frame.astype(np.uint8)
 
     def _create_box_mask(
         self, crop_frame: np.ndarray, blur: float = 0.3, padding: tuple = (0, 0, 0, 0)
     ) -> np.ndarray:
-        """Create a soft elliptical mask for seamless blending."""
         h, w = crop_frame.shape[:2]
-        mask = np.zeros((h, w), dtype=np.float32)
+        mask   = np.zeros((h, w), dtype=np.float32)
         center = (w // 2, h // 2)
-        # Slightly inset axes so ellipse doesn't touch the edge
-        axes = (max(1, w // 2 - 2), max(1, h // 2 - 2))
+        axes   = (max(1, w // 2 - 2), max(1, h // 2 - 2))
         cv2.ellipse(mask, center, axes, 0, 0, 360, 1.0, -1)
-        # Larger blur for feathered edges (45px minimum)
         blur_amount = max(45, int(blur * min(h, w) * 0.5) * 2 + 1)
         if blur_amount % 2 == 0:
             blur_amount += 1
-        mask = cv2.GaussianBlur(mask, (blur_amount, blur_amount), 0)
-        return mask
+        return cv2.GaussianBlur(mask, (blur_amount, blur_amount), 0)
 
     def _color_transfer(
         self, source: np.ndarray, target: np.ndarray, mask: np.ndarray
     ) -> np.ndarray:
-        """Transfer color statistics from target to source in LAB space."""
         source_lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
         target_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype(np.float32)
-        mask_bool = mask > 0.5
+        mask_bool  = mask > 0.5
         if not mask_bool.any():
             return source
         for i in range(3):
             s_mean = source_lab[:, :, i][mask_bool].mean()
-            s_std = source_lab[:, :, i][mask_bool].std() + 1e-6
+            s_std  = source_lab[:, :, i][mask_bool].std() + 1e-6
             t_mean = target_lab[:, :, i][mask_bool].mean()
-            t_std = target_lab[:, :, i][mask_bool].std() + 1e-6
+            t_std  = target_lab[:, :, i][mask_bool].std() + 1e-6
             source_lab[:, :, i] = np.clip(
-                (source_lab[:, :, i] - s_mean) * (t_std / s_std) + t_mean, 0, 255
+                (source_lab[:, :, i] - s_mean) * (t_std / s_std) + t_mean,
+                0, 255,
             )
         return cv2.cvtColor(source_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
 
@@ -223,62 +270,44 @@ class FaceSwapEngine:
         self,
         temp_frame: np.ndarray,
         crop_frame: np.ndarray,
-        crop_mask: np.ndarray,
+        crop_mask:  np.ndarray,
         affine_matrix: np.ndarray,
     ) -> np.ndarray:
-        """Paste swapped face back onto original frame."""
         temp_h, temp_w = temp_frame.shape[:2]
         crop_h, crop_w = crop_frame.shape[:2]
 
         inverse_matrix = cv2.invertAffineTransform(affine_matrix)
 
-        # Calculate paste area
-        crop_points = np.array(
+        crop_points  = np.array(
             [[0, 0], [crop_w, 0], [crop_w, crop_h], [0, crop_h]], dtype=np.float32
         )
         paste_points = cv2.transform(
             crop_points.reshape(1, -1, 2), inverse_matrix
         ).reshape(-1, 2)
 
-        x1 = max(0, int(np.floor(paste_points[:, 0].min())))
-        y1 = max(0, int(np.floor(paste_points[:, 1].min())))
-        x2 = min(temp_w, int(np.ceil(paste_points[:, 0].max())))
-        y2 = min(temp_h, int(np.ceil(paste_points[:, 1].max())))
+        x1 = max(0,      int(np.floor(paste_points[:, 0].min())))
+        y1 = max(0,      int(np.floor(paste_points[:, 1].min())))
+        x2 = min(temp_w, int(np.ceil( paste_points[:, 0].max())))
+        y2 = min(temp_h, int(np.ceil( paste_points[:, 1].max())))
 
         paste_w = x2 - x1
         paste_h = y2 - y1
-
         if paste_w <= 0 or paste_h <= 0:
             return temp_frame
 
-        # Adjust inverse matrix for paste area offset
         paste_matrix = inverse_matrix.copy()
         paste_matrix[0, 2] -= x1
         paste_matrix[1, 2] -= y1
 
-        # Warp crop frame and mask to paste area
         inverse_frame = cv2.warpAffine(
             crop_frame, paste_matrix, (paste_w, paste_h),
-            borderMode=cv2.BORDER_REPLICATE
+            borderMode=cv2.BORDER_REPLICATE,
         )
-        inverse_mask = cv2.warpAffine(
-            crop_mask, paste_matrix, (paste_w, paste_h)
-        )
-        inverse_mask = np.clip(inverse_mask, 0, 1)
-        inverse_mask = np.expand_dims(inverse_mask, axis=-1)
+        inverse_mask = cv2.warpAffine(crop_mask, paste_matrix, (paste_w, paste_h))
+        inverse_mask = np.clip(inverse_mask, 0, 1)[:, :, np.newaxis]
 
-        # Blend
         result = temp_frame.copy()
-        paste_region = result[y1:y2, x1:x2].astype(np.float32)
-        inverse_frame = inverse_frame.astype(np.float32)
-        blended = paste_region * (1 - inverse_mask) + inverse_frame * inverse_mask
+        roi    = result[y1:y2, x1:x2].astype(np.float32)
+        blended = roi * (1 - inverse_mask) + inverse_frame.astype(np.float32) * inverse_mask
         result[y1:y2, x1:x2] = blended.astype(np.uint8)
-
         return result
-
-    def unload(self):
-        self.session = None
-        self._model_initializer = None
-        self.is_loaded = False
-        self._transform_buffer.clear()
-        gc.collect()
