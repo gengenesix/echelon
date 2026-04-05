@@ -375,21 +375,20 @@ jobs:
 
             ## 🆕 What's new in ${{ github.ref_name }}
 
-            ### Face Tracking — no more disappearing face
-            - **Re-detects face every 0.3s** (was 0.6s) on CPU — face stays locked during head turns
-            - **More tracking points** (40 candidates, min 3) — holds through partial occlusion and fast rotation
-            - **Faster position response** — transform buffer reduced from 3→2 frames, less lag when moving
+            ### Model Downloader — fully rewritten (v3.2)
+            - **Verified working URLs** from facefusion-assets releases (models-3.0.0 / models-3.4.0) — no more 404s
+            - **ghost-unet-256** (`ghost_unet_2blocks.onnx`, ~25 MB) now downloaded automatically
+              — sharper 256×256 swap model, better identity preservation than inswapper_128
+              — auto-selected at runtime when present; Settings shows status and Browse button
+            - **Per-model download threads** (`SingleModelDownloader`) — each model downloads independently
+            - **Per-chunk stall detection** (90s timeout) — no more infinite hangs on slow connections
+            - **Resumable partial downloads** — interrupted downloads restart from scratch cleanly
+            - **CodeFormer size corrected** — actual file is ~359 MB (was mis-labelled ~120 MB)
 
-            ### Visual Quality
-            - **Temporal smoothing** — 85/15 blend between consecutive swap crops eliminates CPU flicker
-            - **Less over-sharpening** — unsharp mask reduced (was making faces look plastic/fake)
-            - **Larger blend mask** — covers more of the face edge, visible seam at swap boundary reduced
-            - **Enhancement in speed mode** — face-region bilateral filter now always active (~3ms, was skipped)
-
-            ### Better Models
-            - **CodeFormer ONNX** added to the model downloader (optional ~120 MB)
-              — neural face restoration replaces the OpenCV bilateral fallback, major quality improvement
-              — downloads automatically on first launch if network is available
+            ### Settings → AI Models panel
+            - **ghost-unet status row** — shows ✅/❌ and Browse button for manual install
+            - **Smart status message** — tells you exactly which optional models are missing
+            - All model status icons refresh after every download or manual install
 
             ---
 
@@ -435,16 +434,17 @@ jobs:
 
             ---
 
-            ## 🤖 AI Models (first launch only)
-
-            On first launch, Echelon downloads two models (~600 MB, one-time):
+            ## 🤖 AI Models (downloaded automatically on first launch)
 
             | Model | Size | Purpose |
             |---|---|---|
-            | `inswapper_128.onnx` | ~554 MB | Face swap engine |
-            | `buffalo_l` | ~46 MB | Face detection |
+            | `inswapper_128.onnx` | ~554 MB | Face swap engine (required) |
+            | `buffalo_l` | ~330 MB | Face detection (required) |
+            | `ghost_unet_2blocks.onnx` | ~25 MB | Sharper swap model — auto-selected when present |
+            | `real_esrgan_x2_fp16.onnx` | ~34 MB | Super-resolution enhancer |
+            | `codeformer.onnx` | ~359 MB | Neural face restoration (best quality) |
 
-            Downloads automatically via the setup wizard.
+            All models download automatically via Settings → AI Models → Download Models.
 
             ---
 
