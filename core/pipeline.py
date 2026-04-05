@@ -69,7 +69,7 @@ class EchelonPipeline(QThread):
     def __init__(self, config: AppConfig, hw_info: HardwareInfo, parent=None):
         super().__init__(parent)
         self.config   = config
-        self.hw_info  = hw_info
+        self.hw_info  = hw_info   # kept for _get_processing_size CPU check
         model_path    = str(Path(config.models_dir) / "inswapper_128.onnx")
 
         self.capture = CameraCapture(
@@ -113,6 +113,16 @@ class EchelonPipeline(QThread):
         self._frame_count      = 0
         self._detect_every     = config.face_detect_interval
         self._frames_since_det = 0
+
+        # ── CPU-only auto-tune ─────────────────────────────────────────────────
+        # On machines with no GPU the swap model takes 40-80ms per inference.
+        # Force settings that keep display smooth even at that latency.
+        if not hw_info.has_gpu:
+            self.frame_skip    = 2        # process 1-in-3 frames
+            self._detect_every = 10       # re-detect every 10 processed frames
+            self.face_detector._detect_interval = 10
+            self.performance_mode = 'speed'
+            logger.info("CPU-only mode: frame_skip=2, detect_every=10, mode=speed")
 
     # ── Source face management ────────────────────────────────────────────────
 
@@ -279,6 +289,12 @@ class EchelonPipeline(QThread):
                         target_face = None
 
                     # ── Swap ─────────────────────────────────────────────────
+                    # Skip if face is too small — result would be blurry junk
+                    if target_face is not None:
+                        b = target_face.bbox
+                        if (b[2] - b[0]) < 60 or (b[3] - b[1]) < 60:
+                            target_face = None
+
                     if target_face is not None:
                         try:
                             swapped = self.swap_engine.swap_face(
@@ -307,9 +323,11 @@ class EchelonPipeline(QThread):
                                 interpolation=cv2.INTER_LINEAR,
                             )
 
-                        # Quality enhancement (quality mode only)
+                        # Enhancement: quality mode → CodeFormer/GFPGAN
+                        #              balanced mode → OpenCV bilateral (fast)
+                        #              speed mode   → skip (too slow on CPU)
                         if (
-                            self.performance_mode == 'quality'
+                            self.performance_mode in ('quality', 'balanced')
                             and self._enhancer is not None
                             and self._enhancer.is_loaded()
                         ):
@@ -372,13 +390,18 @@ class EchelonPipeline(QThread):
 
     def _try_load_enhancer(self) -> None:
         try:
-            self._enhancer = FaceEnhancer()
+            from config.manager import BASE_DIR
+            models_dir = str(BASE_DIR / "models")
+            self._enhancer = FaceEnhancer(models_dir=models_dir)
             self._enhancer.load()
         except Exception:
             self._enhancer = None
 
     def _get_processing_size(self) -> Optional[tuple]:
         if self.performance_mode == 'speed':
+            # CPU-only: 320×240 — half the pixels vs 480×360, faster cv2 ops
+            if not self.hw_info.has_gpu:
+                return (320, 240)
             return (480, 360)
         elif self.performance_mode == 'balanced':
             return (640, 480)

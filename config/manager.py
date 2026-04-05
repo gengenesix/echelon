@@ -82,6 +82,12 @@ class ConfigManager:
             config.models_dir = str(BASE_DIR / "models")
         if not config.data_dir:
             config.data_dir = str(BASE_DIR / "data")
+        # ── v3.0 migration: downgrade legacy high-res configs ─────────────────
+        # Older versions defaulted to 1280×720 which kills CPU-only machines.
+        if config.output_width > 640:
+            config.output_width = 640
+        if config.output_height > 480:
+            config.output_height = 480
         return config
 
     def save(self, config: AppConfig):
