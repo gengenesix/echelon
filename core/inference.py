@@ -57,9 +57,11 @@ class FaceSwapEngine:
             # ORT_PARALLEL lets each ONNX op run across multiple threads.
             # intra=6 uses 6 of the 8 i5 logical cores for tensor ops.
             # inter=1 — we run one model at a time, no benefit from >1 here.
-            opts.execution_mode       = ort.ExecutionMode.ORT_PARALLEL
+            # ORT_SEQUENTIAL is faster for small models like inswapper_128
+            # (128×128 input). ORT_PARALLEL's thread-pool overhead > savings.
+            opts.execution_mode       = ort.ExecutionMode.ORT_SEQUENTIAL
             opts.inter_op_num_threads = 1
-            opts.intra_op_num_threads = 6
+            opts.intra_op_num_threads = 6   # use 6 of 8 i5 logical cores
             opts.enable_mem_pattern   = True
             opts.enable_cpu_mem_arena = True
             self.session = ort.InferenceSession(

@@ -118,11 +118,11 @@ class EchelonPipeline(QThread):
         # On machines with no GPU the swap model takes 40-80ms per inference.
         # Force settings that keep display smooth even at that latency.
         if not hw_info.has_gpu:
-            self.frame_skip    = 2        # process 1-in-3 frames
-            self._detect_every = 10       # re-detect every 10 processed frames
-            self.face_detector._detect_interval = 10
+            self.frame_skip    = 2        # process 1-in-3 frames → smooth 30fps display
+            self._detect_every = 6        # re-detect every 6 processed frames (~0.6s)
+            self.face_detector._detect_interval = 6
             self.performance_mode = 'speed'
-            logger.info("CPU-only mode: frame_skip=2, detect_every=10, mode=speed")
+            logger.info("CPU-only mode: frame_skip=2, detect_every=6, mode=speed")
 
     # ── Source face management ────────────────────────────────────────────────
 
