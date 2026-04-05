@@ -161,33 +161,66 @@ class SettingsDialog(QDialog):
         manual_desc.setWordWrap(True)
         mdl_layout.addWidget(manual_desc)
 
-        # inswapper browse
-        inswapper_row = QHBoxLayout()
-        inswapper_lbl = QLabel("inswapper_128.onnx  (~554 MB):")
-        inswapper_lbl.setStyleSheet("color: #C0C0D0; font-size: 11px;")
-        self._inswapper_status = QLabel("❓")
-        self._inswapper_status.setFixedWidth(20)
-        browse_inswapper = QPushButton("Browse…")
-        browse_inswapper.setFixedWidth(90)
-        browse_inswapper.clicked.connect(self._browse_inswapper)
-        inswapper_row.addWidget(self._inswapper_status)
-        inswapper_row.addWidget(inswapper_lbl, 1)
-        inswapper_row.addWidget(browse_inswapper)
-        mdl_layout.addLayout(inswapper_row)
+        def _mdl_row(label_text, browse_slot):
+            """Helper — returns (QHBoxLayout, status_label)."""
+            row    = QHBoxLayout()
+            status = QLabel("❓")
+            status.setFixedWidth(20)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("color: #C0C0D0; font-size: 11px;")
+            btn = QPushButton("Browse…")
+            btn.setFixedWidth(90)
+            btn.clicked.connect(browse_slot)
+            row.addWidget(status)
+            row.addWidget(lbl, 1)
+            row.addWidget(btn)
+            return row, status
 
-        # buffalo_l browse
-        buffalo_row = QHBoxLayout()
-        buffalo_lbl = QLabel("buffalo_l folder  (5 .onnx files, ~330 MB):")
-        buffalo_lbl.setStyleSheet("color: #C0C0D0; font-size: 11px;")
-        self._buffalo_status = QLabel("❓")
-        self._buffalo_status.setFixedWidth(20)
-        browse_buffalo = QPushButton("Browse…")
-        browse_buffalo.setFixedWidth(90)
-        browse_buffalo.clicked.connect(self._browse_buffalo_folder)
-        buffalo_row.addWidget(self._buffalo_status)
-        buffalo_row.addWidget(buffalo_lbl, 1)
-        buffalo_row.addWidget(browse_buffalo)
-        mdl_layout.addLayout(buffalo_row)
+        def _hint(text, color="#5C5FFF"):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"color: {color}; font-size: 10px; padding-left: 22px;")
+            lbl.setWordWrap(True)
+            return lbl
+
+        # ── Required models ────────────────────────────────────────────────────
+        req_title = QLabel("Required")
+        req_title.setStyleSheet("color: #8888A0; font-size: 11px; font-weight: 600;")
+        mdl_layout.addWidget(req_title)
+
+        row, self._inswapper_status = _mdl_row(
+            "inswapper_128.onnx  — face swap engine (~554 MB)", self._browse_inswapper
+        )
+        mdl_layout.addLayout(row)
+
+        row, self._buffalo_status = _mdl_row(
+            "buffalo_l  — face detection (5 files, ~330 MB)", self._browse_buffalo_folder
+        )
+        mdl_layout.addLayout(row)
+
+        # ── Optional quality models ────────────────────────────────────────────
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #2A2A35;")
+        mdl_layout.addWidget(sep2)
+
+        opt_title = QLabel("Optional — quality enhancement (download via button above)")
+        opt_title.setStyleSheet("color: #8888A0; font-size: 11px; font-weight: 600;")
+        mdl_layout.addWidget(opt_title)
+
+        row, self._codeformer_status = _mdl_row(
+            "codeformer.onnx  — neural face restoration (~120 MB)", self._browse_codeformer
+        )
+        mdl_layout.addLayout(row)
+        mdl_layout.addWidget(_hint(
+            "Removes the fake / plastic look. Highly recommended — auto-downloaded above."
+        ))
+
+        row, self._ghost_status = _mdl_row(
+            "ghost_unet_2blocks.onnx  — sharper swap model 256×256 (~25 MB)", self._browse_ghost
+        )
+        mdl_layout.addLayout(row)
+        mdl_layout.addWidget(_hint(
+            "Better identity preservation than inswapper_128. Used automatically when present."
+        ))
 
         # Models folder label
         self._models_dir_lbl = QLabel("")
@@ -233,14 +266,29 @@ class SettingsDialog(QDialog):
 
     def _refresh_model_status(self):
         from models.downloader import ModelDownloader
-        dl = ModelDownloader(self.config.models_dir)
+        dl           = ModelDownloader(self.config.models_dir)
         inswapper_ok = dl._inswapper_ok()
         buffalo_ok   = dl._buffalo_ok()
+        codeformer_ok = dl._codeformer_ok()
+        ghost_ok      = dl._ghost_ok()
 
         if inswapper_ok and buffalo_ok:
-            self._model_status_lbl.setText("✅ All models present and valid.")
-            self._model_status_lbl.setStyleSheet("color: #22D98F; font-size: 12px;")
-            self._dl_btn.setText("Re-download Models")
+            extras = []
+            if not codeformer_ok:
+                extras.append("CodeFormer (enhancer)")
+            if not ghost_ok:
+                extras.append("ghost-unet (better swap)")
+            if extras:
+                self._model_status_lbl.setText(
+                    "✅ Core models ready.\n"
+                    f"Optional quality models missing: {', '.join(extras)}\n"
+                    "Click 'Download Models' to get them."
+                )
+                self._model_status_lbl.setStyleSheet("color: #FFB547; font-size: 12px;")
+            else:
+                self._model_status_lbl.setText("✅ All models present — best quality active.")
+                self._model_status_lbl.setStyleSheet("color: #22D98F; font-size: 12px;")
+            self._dl_btn.setText("Download Optional Models")
         else:
             missing = []
             if not inswapper_ok:
@@ -254,8 +302,10 @@ class SettingsDialog(QDialog):
             self._model_status_lbl.setStyleSheet("color: #FFB547; font-size: 12px;")
             self._dl_btn.setText("Download Models")
 
-        self._inswapper_status.setText("✅" if inswapper_ok else "❌")
-        self._buffalo_status.setText("✅"   if buffalo_ok   else "❌")
+        self._inswapper_status.setText("✅" if inswapper_ok   else "❌")
+        self._buffalo_status.setText("✅"   if buffalo_ok      else "❌")
+        self._codeformer_status.setText("✅" if codeformer_ok  else "❌")
+        self._ghost_status.setText("✅"      if ghost_ok        else "❌")
         self._models_dir_lbl.setText(f"Models folder: {self.config.models_dir}")
 
     # ── Auto download ─────────────────────────────────────────────────────────
@@ -328,6 +378,42 @@ class SettingsDialog(QDialog):
             shutil.copy2(str(src), str(dest))
             self._refresh_model_status()
             QMessageBox.information(self, "Done", "✅ inswapper_128.onnx installed!")
+        except Exception as e:
+            QMessageBox.critical(self, "Copy Failed", str(e))
+
+    def _browse_codeformer(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select codeformer.onnx", "", "ONNX Model (*.onnx)"
+        )
+        if not path:
+            return
+        src = Path(path)
+        if src.stat().st_size < 50 * 1024 * 1024:
+            QMessageBox.warning(self, "File Too Small",
+                "This file seems too small. codeformer.onnx is ~120 MB.")
+            return
+        dest = Path(self.config.models_dir) / "codeformer.onnx"
+        try:
+            import shutil
+            shutil.copy2(str(src), str(dest))
+            self._refresh_model_status()
+            QMessageBox.information(self, "Done", "✅ codeformer.onnx installed!")
+        except Exception as e:
+            QMessageBox.critical(self, "Copy Failed", str(e))
+
+    def _browse_ghost(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select ghost_unet_2blocks.onnx", "", "ONNX Model (*.onnx)"
+        )
+        if not path:
+            return
+        src = Path(path)
+        dest = Path(self.config.models_dir) / "ghost_unet_2blocks.onnx"
+        try:
+            import shutil
+            shutil.copy2(str(src), str(dest))
+            self._refresh_model_status()
+            QMessageBox.information(self, "Done", "✅ ghost_unet_2blocks.onnx installed!")
         except Exception as e:
             QMessageBox.critical(self, "Copy Failed", str(e))
 

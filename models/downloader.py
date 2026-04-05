@@ -28,6 +28,13 @@ class ModelDownloader(QThread):
     ]
     CODEFORMER_MIN_BYTES = 100 * 1024 * 1024   # real file ~120 MB
 
+    # ── ghost-unet-256 — better swap model than inswapper_128 (~25 MB) ───────
+    GHOST_URLS = [
+        "https://github.com/facefusion/facefusion-assets/releases/download/models/ghost_unet_2blocks.onnx",
+        "https://huggingface.co/facefusion/facefusion-assets/resolve/main/models/ghost_unet_2blocks.onnx",
+    ]
+    GHOST_MIN_BYTES = 10 * 1024 * 1024   # real file ~25 MB
+
     # ── inswapper_128.onnx mirrors ───────────────────────────────────────────
     INSWAPPER_URLS = [
         # GitHub releases — most reliable
@@ -93,14 +100,19 @@ class ModelDownloader(QThread):
 
     def check_models_exist(self) -> dict:
         return {
-            "inswapper_128.onnx": self._inswapper_ok(),
-            "buffalo_l":          self._buffalo_ok(),
-            "codeformer.onnx":    self._codeformer_ok(),
+            "inswapper_128.onnx":       self._inswapper_ok(),
+            "buffalo_l":                self._buffalo_ok(),
+            "codeformer.onnx":          self._codeformer_ok(),
+            "ghost_unet_2blocks.onnx":  self._ghost_ok(),
         }
 
     def _codeformer_ok(self) -> bool:
         p = self.models_dir / "codeformer.onnx"
         return p.exists() and p.stat().st_size >= self.CODEFORMER_MIN_BYTES
+
+    def _ghost_ok(self) -> bool:
+        p = self.models_dir / "ghost_unet_2blocks.onnx"
+        return p.exists() and p.stat().st_size >= self.GHOST_MIN_BYTES
 
     def _inswapper_ok(self) -> bool:
         p = self.models_dir / "inswapper_128.onnx"
@@ -187,6 +199,21 @@ class ModelDownloader(QThread):
         else:
             self.progress_updated.emit(99, "CodeFormer enhancer ✓ (already present)")
             self.download_finished.emit("codeformer.onnx")
+
+        # ── ghost-unet-256 (optional — better swap quality than inswapper_128) ─
+        ghost_dest = self.models_dir / "ghost_unet_2blocks.onnx"
+        if not self._ghost_ok():
+            self.progress_updated.emit(99, "Downloading ghost-unet-256 swap model (~25 MB)…")
+            ok = self._try_mirrors(
+                self.GHOST_URLS, ghost_dest, "ghost_unet_2blocks.onnx",
+                self.GHOST_MIN_BYTES, pct_start=99, pct_end=100
+            )
+            if ok:
+                self.download_finished.emit("ghost_unet_2blocks.onnx")
+            else:
+                self.progress_updated.emit(100, "ghost-unet optional — skipped (inswapper_128 will be used)")
+        else:
+            self.download_finished.emit("ghost_unet_2blocks.onnx")
 
         self.progress_updated.emit(100, "✅ All models ready!")
         self.all_done.emit()

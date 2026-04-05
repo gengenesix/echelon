@@ -1,12 +1,15 @@
 """
-Face swap inference engine using inswapper_128.onnx
-Based on FaceFusion's actual inference pipeline.
+Face swap inference engine.
 
-v2.5 improvements:
- - warmup(): one dummy inference to JIT-compile ONNX graph before real use
- - prepare_source(): pre-compute the 512×512 matrix multiply ONCE per source
-   face instead of every single frame — eliminates a ~0.5ms per-frame cost
- - _cached_source_embedding: reused across all frames while source is unchanged
+Supports two swap models (auto-selected, best available wins):
+  1. ghost_unet_2blocks.onnx — 256×256 input, better identity/detail (~25 MB)
+  2. inswapper_128.onnx      — 128×128 input, fallback (~554 MB)
+
+v3.1 improvements:
+ - Auto-selects ghost-unet-256 when present (better quality)
+ - Temporal crop smoothing (85/15) reduces CPU flicker
+ - Softer unsharp mask (1.4/-0.4) removes plasticky over-sharpening
+ - transform_buffer maxlen=2 for faster position response
 """
 import cv2
 import numpy as np
@@ -38,6 +41,7 @@ class FaceSwapEngine:
         self.providers            = providers
         self.is_loaded            = False
         self.input_size           = (128, 128)
+        self._model_type          = 'inswapper'  # 'inswapper' | 'ghost'
         self._input_name          = None
         self._output_name         = None
         self._source_name         = None
@@ -52,42 +56,58 @@ class FaceSwapEngine:
 
     def load(self) -> bool:
         import onnxruntime as ort
+        from pathlib import Path
+
+        # ── Auto-select best available swap model ────────────────────────────
+        # ghost-unet-256 is preferred: better quality, much smaller file size.
+        # Fall back to the configured inswapper_128 path if not present.
+        ghost_path = Path(self.model_path).parent / "ghost_unet_2blocks.onnx"
+        if ghost_path.exists() and ghost_path.stat().st_size >= 10 * 1024 * 1024:
+            actual_path      = str(ghost_path)
+            self._model_type = 'ghost'
+            self.input_size  = (256, 256)
+            logger.info("Using ghost-unet-256 swap model (better quality)")
+        else:
+            actual_path      = self.model_path
+            self._model_type = 'inswapper'
+            self.input_size  = (128, 128)
+            logger.info("Using inswapper_128 swap model")
+
         try:
             t0 = time.time()
             opts = ort.SessionOptions()
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            # ORT_PARALLEL lets each ONNX op run across multiple threads.
-            # intra=6 uses 6 of the 8 i5 logical cores for tensor ops.
-            # inter=1 — we run one model at a time, no benefit from >1 here.
-            # ORT_SEQUENTIAL is faster for small models like inswapper_128
-            # (128×128 input). ORT_PARALLEL's thread-pool overhead > savings.
             opts.execution_mode       = ort.ExecutionMode.ORT_SEQUENTIAL
             opts.inter_op_num_threads = 1
-            opts.intra_op_num_threads = 6   # use 6 of 8 i5 logical cores
+            opts.intra_op_num_threads = 6
             opts.enable_mem_pattern   = True
             opts.enable_cpu_mem_arena = True
             self.session = ort.InferenceSession(
-                self.model_path, sess_options=opts, providers=self.providers
+                actual_path, sess_options=opts, providers=self.providers
             )
             inputs = self.session.get_inputs()
-            self._input_name  = inputs[0].name   # 'target' — [1,3,128,128]
-            self._source_name = inputs[1].name   # 'source' — [1,512]
+            self._input_name  = inputs[0].name
+            self._source_name = inputs[1].name
             self._output_name = self.session.get_outputs()[0].name
 
-            # Load model initializer for inswapper embedding transformation
-            try:
-                model = onnx.load(self.model_path)
-                self._model_initializer = onnx.numpy_helper.to_array(
-                    model.graph.initializer[-1]
-                )
-                logger.info(f"Model initializer shape: {self._model_initializer.shape}")
-            except Exception as e:
-                logger.warning(f"Could not load model initializer: {e}")
-                self._model_initializer = None
+            # Load inswapper-specific model initializer (not needed for ghost)
+            if self._model_type == 'inswapper':
+                try:
+                    model = onnx.load(actual_path)
+                    self._model_initializer = onnx.numpy_helper.to_array(
+                        model.graph.initializer[-1]
+                    )
+                    logger.info(f"Model initializer shape: {self._model_initializer.shape}")
+                except Exception as e:
+                    logger.warning(f"Could not load model initializer: {e}")
+                    self._model_initializer = None
+            else:
+                self._model_initializer = None   # ghost uses raw embedding
 
             self.is_loaded = True
             logger.info(
-                f"FaceSwapEngine loaded in {time.time()-t0:.2f}s — "
+                f"FaceSwapEngine ({self._model_type}, {self.input_size[0]}px) "
+                f"loaded in {time.time()-t0:.2f}s — "
                 f"inputs: {[(i.name, i.shape) for i in inputs]}"
             )
             return True
@@ -105,8 +125,9 @@ class FaceSwapEngine:
             return
         try:
             t0 = time.time()
-            dummy_target = np.zeros((1, 3, 128, 128), dtype=np.float32)
-            dummy_source = np.zeros((1, 512),          dtype=np.float32)
+            h, w = self.input_size
+            dummy_target = np.zeros((1, 3, h, w), dtype=np.float32)
+            dummy_source = np.zeros((1, 512),      dtype=np.float32)
             self.session.run(
                 [self._output_name],
                 {self._input_name: dummy_target, self._source_name: dummy_source},
@@ -123,14 +144,16 @@ class FaceSwapEngine:
         """
         try:
             embedding = source_face.embedding.reshape((1, -1)).astype(np.float32)
-            if self._model_initializer is not None:
+            if self._model_type == 'inswapper' and self._model_initializer is not None:
+                # inswapper requires a learned linear transform of the arcface embedding
                 embedding = np.dot(embedding, self._model_initializer)
-                norm = np.linalg.norm(embedding)
-                if norm > 0:
-                    embedding = embedding / norm
+            # Both models expect a unit-norm embedding
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
             self._cached_source_embedding = embedding
             self._last_crop_output        = None   # reset temporal buffer on face change
-            logger.debug("Source embedding cached")
+            logger.debug(f"Source embedding cached (model={self._model_type})")
         except Exception as e:
             logger.warning(f"prepare_source failed: {e}")
             self._cached_source_embedding = None
