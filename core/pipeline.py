@@ -119,10 +119,10 @@ class EchelonPipeline(QThread):
         # Force settings that keep display smooth even at that latency.
         if not hw_info.has_gpu:
             self.frame_skip    = 2        # process 1-in-3 frames → smooth 30fps display
-            self._detect_every = 6        # re-detect every 6 processed frames (~0.6s)
-            self.face_detector._detect_interval = 6
+            self._detect_every = 3        # re-detect every 3 processed frames (~0.3s)
+            self.face_detector._detect_interval = 3
             self.performance_mode = 'speed'
-            logger.info("CPU-only mode: frame_skip=2, detect_every=6, mode=speed")
+            logger.info("CPU-only mode: frame_skip=2, detect_every=3, mode=speed")
 
     # ── Source face management ────────────────────────────────────────────────
 
@@ -323,16 +323,26 @@ class EchelonPipeline(QThread):
                                 interpolation=cv2.INTER_LINEAR,
                             )
 
-                        # Enhancement: quality mode → CodeFormer/GFPGAN
-                        #              balanced mode → OpenCV bilateral (fast)
-                        #              speed mode   → skip (too slow on CPU)
-                        if (
-                            self.performance_mode in ('quality', 'balanced')
-                            and self._enhancer is not None
-                            and self._enhancer.is_loaded()
-                        ):
+                        # Enhancement:
+                        #   quality/balanced → full-frame CodeFormer or bilateral
+                        #   speed (CPU)      → face-region-only bilateral (~3ms)
+                        if self._enhancer is not None and self._enhancer.is_loaded():
                             try:
-                                swapped = self._enhancer.enhance(swapped)
+                                if self.performance_mode in ('quality', 'balanced'):
+                                    swapped = self._enhancer.enhance(swapped)
+                                elif blur_face_bbox is not None:
+                                    # Scale bbox from proc_frame coords → output coords
+                                    if proc_size:
+                                        sx = frame.shape[1] / proc_size[0]
+                                        sy = frame.shape[0] / proc_size[1]
+                                        scaled_bbox = blur_face_bbox * np.array(
+                                            [sx, sy, sx, sy], dtype=np.float32
+                                        )
+                                    else:
+                                        scaled_bbox = blur_face_bbox
+                                    swapped = self._enhancer.enhance_region(
+                                        swapped, scaled_bbox
+                                    )
                             except Exception:
                                 pass
 

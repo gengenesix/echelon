@@ -63,6 +63,32 @@ class FaceEnhancer:
         except Exception:
             return frame
 
+    def enhance_region(self, frame: np.ndarray, face_bbox: np.ndarray) -> np.ndarray:
+        """
+        Apply enhancement only to the face bounding-box region.
+        Typically 5-10× faster than enhancing the full frame, making it
+        viable even in speed/CPU mode.
+        """
+        if not self._loaded:
+            return frame
+        try:
+            x1, y1, x2, y2 = face_bbox.astype(int)
+            h, w = frame.shape[:2]
+            pad  = max(10, int((x2 - x1) * 0.15))
+            rx1  = max(0, x1 - pad)
+            ry1  = max(0, y1 - pad)
+            rx2  = min(w, x2 + pad)
+            ry2  = min(h, y2 + pad)
+            if rx2 <= rx1 + 10 or ry2 <= ry1 + 10:
+                return frame
+            region          = frame[ry1:ry2, rx1:rx2]
+            enhanced_region = self._enhance_opencv(region)
+            result          = frame.copy()
+            result[ry1:ry2, rx1:rx2] = enhanced_region
+            return result
+        except Exception:
+            return frame
+
     def is_loaded(self) -> bool:
         return self._loaded
 

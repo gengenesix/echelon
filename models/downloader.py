@@ -20,6 +20,14 @@ class ModelDownloader(QThread):
     download_failed  = pyqtSignal(str, str)
     all_done         = pyqtSignal()
 
+    # ── CodeFormer ONNX — neural face restoration (~120 MB, optional) ────────
+    CODEFORMER_URLS = [
+        "https://github.com/facefusion/facefusion-assets/releases/download/models/codeformer.onnx",
+        "https://huggingface.co/facefusion/facefusion-assets/resolve/main/models/codeformer.onnx",
+        "https://huggingface.co/netrunner-exe/Insight-Swap-models/resolve/main/codeformer.onnx",
+    ]
+    CODEFORMER_MIN_BYTES = 100 * 1024 * 1024   # real file ~120 MB
+
     # ── inswapper_128.onnx mirrors ───────────────────────────────────────────
     INSWAPPER_URLS = [
         # GitHub releases — most reliable
@@ -87,7 +95,12 @@ class ModelDownloader(QThread):
         return {
             "inswapper_128.onnx": self._inswapper_ok(),
             "buffalo_l":          self._buffalo_ok(),
+            "codeformer.onnx":    self._codeformer_ok(),
         }
+
+    def _codeformer_ok(self) -> bool:
+        p = self.models_dir / "codeformer.onnx"
+        return p.exists() and p.stat().st_size >= self.CODEFORMER_MIN_BYTES
 
     def _inswapper_ok(self) -> bool:
         p = self.models_dir / "inswapper_128.onnx"
@@ -157,6 +170,24 @@ class ModelDownloader(QThread):
             self.progress_updated.emit(97, "Detection models ✓ (already present)")
 
         self.download_finished.emit("buffalo_l")
+
+        # ── CodeFormer ONNX (optional — greatly improves swap quality) ────────
+        cf_dest = self.models_dir / "codeformer.onnx"
+        if not self._codeformer_ok():
+            self.progress_updated.emit(98, "Downloading CodeFormer enhancer (~120 MB)…")
+            ok = self._try_mirrors(
+                self.CODEFORMER_URLS, cf_dest, "codeformer.onnx",
+                self.CODEFORMER_MIN_BYTES, pct_start=98, pct_end=99
+            )
+            if ok:
+                self.download_finished.emit("codeformer.onnx")
+            else:
+                # Non-fatal: app works fine without CodeFormer (falls back to OpenCV)
+                self.progress_updated.emit(99, "CodeFormer optional — skipped (will use OpenCV fallback)")
+        else:
+            self.progress_updated.emit(99, "CodeFormer enhancer ✓ (already present)")
+            self.download_finished.emit("codeformer.onnx")
+
         self.progress_updated.emit(100, "✅ All models ready!")
         self.all_done.emit()
 

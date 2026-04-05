@@ -42,9 +42,11 @@ class FaceSwapEngine:
         self._output_name         = None
         self._source_name         = None
         self._model_initializer   = None
-        self._transform_buffer    = collections.deque(maxlen=3)
+        self._transform_buffer    = collections.deque(maxlen=2)
         # Pre-computed source embedding — updated once per source face change
         self._cached_source_embedding: Optional[np.ndarray] = None
+        # Temporal smoothing: blend consecutive swap crops to reduce flicker
+        self._last_crop_output: Optional[np.ndarray] = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -127,6 +129,7 @@ class FaceSwapEngine:
                 if norm > 0:
                     embedding = embedding / norm
             self._cached_source_embedding = embedding
+            self._last_crop_output        = None   # reset temporal buffer on face change
             logger.debug("Source embedding cached")
         except Exception as e:
             logger.warning(f"prepare_source failed: {e}")
@@ -136,6 +139,7 @@ class FaceSwapEngine:
         self.session                  = None
         self._model_initializer       = None
         self._cached_source_embedding = None
+        self._last_crop_output        = None
         self.is_loaded                = False
         self._transform_buffer.clear()
         gc.collect()
@@ -180,6 +184,14 @@ class FaceSwapEngine:
 
             # Step 5: Normalise output back to image
             swapped_crop = self._normalize_crop_frame(output)
+
+            # Step 5b: Temporal smoothing — blend with previous crop to reduce
+            # frame-to-frame flicker (85% current, 15% previous)
+            if self._last_crop_output is not None:
+                swapped_crop = cv2.addWeighted(
+                    swapped_crop, 0.85, self._last_crop_output, 0.15, 0
+                )
+            self._last_crop_output = swapped_crop.copy()
 
             # Step 6: Soft elliptical blend mask
             crop_mask = self._create_box_mask(swapped_crop)
@@ -249,10 +261,10 @@ class FaceSwapEngine:
         h, w = crop_frame.shape[:2]
         mask   = np.zeros((h, w), dtype=np.float32)
         center = (w // 2, h // 2)
-        # Shrink axes ~12% vs previous "fill almost everything".
-        # This excludes the outer edge of the warp where border-replicate
-        # introduces colour bleed and smearing artifacts.
-        axes = (max(1, int(w * 0.42)), max(1, int(h * 0.44)))
+        # Shrink axes slightly from full size to exclude outer warp edges where
+        # border-replicate introduces colour bleed, while covering more face area
+        # to reduce visible seams at the blend boundary.
+        axes = (max(1, int(w * 0.47)), max(1, int(h * 0.49)))
         cv2.ellipse(mask, center, axes, 0, 0, 360, 1.0, -1)
         # Stronger edge blur → smoother blend seam at face boundary.
         blur_amount = max(51, int(blur * min(h, w) * 0.7) * 2 + 1)
@@ -266,8 +278,8 @@ class FaceSwapEngine:
         model.  Strength 1.7/-0.7 is a well-tested ratio for skin texture.
         Cost: ~0.3ms on a CPU-only i5 for a 128×128 image.
         """
-        blur = cv2.GaussianBlur(img, (0, 0), 3.0)
-        return cv2.addWeighted(img, 1.7, blur, -0.7, 0)
+        blur = cv2.GaussianBlur(img, (0, 0), 2.5)
+        return cv2.addWeighted(img, 1.4, blur, -0.4, 0)
 
     def _color_transfer(
         self, source: np.ndarray, target: np.ndarray, mask: np.ndarray

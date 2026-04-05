@@ -46,8 +46,8 @@ class FaceTracker:
     )
     # Shi-Tomasi good features — finds corners/edges with actual texture
     FEATURE_PARAMS = dict(
-        maxCorners=25,
-        qualityLevel=0.01,
+        maxCorners=40,    # more candidates → tracking survives partial occlusion
+        qualityLevel=0.008,
         minDistance=4,
         blockSize=5,
     )
@@ -136,7 +136,7 @@ class FaceTracker:
         good_new = new_pts[status.ravel() == 1]
         good_old = self._track_points[status.ravel() == 1]
 
-        if len(good_new) < 4:
+        if len(good_new) < 3:
             self._lost_count += 1
             return None
 
