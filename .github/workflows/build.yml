@@ -373,6 +373,26 @@ jobs:
 
             ---
 
+            ## 🆕 What's new in ${{ github.ref_name }}
+
+            ### Face Tracking — no more disappearing face
+            - **Re-detects face every 0.3s** (was 0.6s) on CPU — face stays locked during head turns
+            - **More tracking points** (40 candidates, min 3) — holds through partial occlusion and fast rotation
+            - **Faster position response** — transform buffer reduced from 3→2 frames, less lag when moving
+
+            ### Visual Quality
+            - **Temporal smoothing** — 85/15 blend between consecutive swap crops eliminates CPU flicker
+            - **Less over-sharpening** — unsharp mask reduced (was making faces look plastic/fake)
+            - **Larger blend mask** — covers more of the face edge, visible seam at swap boundary reduced
+            - **Enhancement in speed mode** — face-region bilateral filter now always active (~3ms, was skipped)
+
+            ### Better Models
+            - **CodeFormer ONNX** added to the model downloader (optional ~120 MB)
+              — neural face restoration replaces the OpenCV bilateral fallback, major quality improvement
+              — downloads automatically on first launch if network is available
+
+            ---
+
             ## 📥 Download & Install
 
             | Platform | File | Notes |
