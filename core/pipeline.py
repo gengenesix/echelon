@@ -26,6 +26,7 @@ import logging
 from collections import deque
 from pathlib import Path
 from threading import Lock
+from typing import Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 import cv2
 import numpy as np
@@ -414,6 +415,3 @@ class EchelonPipeline(QThread):
             gender=tracked.gender,
         )
 
-
-# Allow Optional[tuple] annotation without importing Optional at top level
-from typing import Optional  # noqa: E402 (import after class body — harmless)

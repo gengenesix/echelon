@@ -12,12 +12,22 @@ env:
 jobs:
 
   # ═══════════════════════════════════════════
-  # WINDOWS - .exe installer via NSIS
+  # WINDOWS — .exe installer via NSIS
+  # Supports Windows 10 and 11 (x64)
   # ═══════════════════════════════════════════
   build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4.2.2
+
+      - name: Extract version from tag
+        shell: powershell
+        run: |
+          $ref = "${{ github.ref_name }}"
+          $version = $ref -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+') { $version = "3.0.0" }
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Building Echelon v$version for Windows"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5.5.0
@@ -30,7 +40,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install PyQt6==6.7.0 opencv-python-headless onnxruntime==1.19.2 insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam onnx pyinstaller
-          pip install onnxruntime-directml==1.19.2 || echo "DirectML optional - skipping"
+          pip install onnxruntime-directml==1.19.2 || echo "DirectML optional, skipping"
 
       - name: Prepare data dirs
         shell: cmd
@@ -77,7 +87,7 @@ jobs:
               if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { $installed = $true; Write-Host "NSIS via choco" }
             } catch {}
           }
-          # Method 3: Direct download
+          # Method 3: Direct download (fallback)
           if (-not $installed) {
             foreach ($url in @(
               "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10-setup.exe",
@@ -100,7 +110,7 @@ jobs:
         shell: cmd
         run: |
           set PATH=%PATH%;C:\Program Files (x86)\NSIS
-          "C:\Program Files (x86)\NSIS\makensis.exe" /V4 installer.nsi
+          "C:\Program Files (x86)\NSIS\makensis.exe" /V4 /DAPP_VERSION=${{ env.VERSION }} installer.nsi
           if errorlevel 1 exit /b 1
 
       - name: Verify installer
@@ -116,13 +126,24 @@ jobs:
           path: Echelon-Setup.exe
           retention-days: 90
 
+
   # ═══════════════════════════════════════════
-  # LINUX - AppImage + .deb
+  # LINUX — AppImage (universal) + .deb (Ubuntu/Debian)
+  # Supports Ubuntu 20.04+, Debian 11+, and any distro via AppImage
   # ═══════════════════════════════════════════
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4.2.2
+
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION="3.0.0"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building Echelon v$VERSION for Linux"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5.5.0
@@ -147,8 +168,7 @@ jobs:
           pip install PyQt6==6.7.0 opencv-python-headless onnxruntime insightface Pillow psutil requests tqdm albumentations scikit-learn scipy matplotlib pyvirtualcam onnx pyinstaller
 
       - name: Prepare data dirs
-        run: |
-          mkdir -p data/faces models/models/buffalo_l
+        run: mkdir -p data/faces models/models/buffalo_l
 
       - name: Build with PyInstaller
         run: |
@@ -176,16 +196,27 @@ jobs:
       - name: Verify Linux build
         run: |
           [ -f "dist/Echelon/Echelon" ] || { echo "ERROR: binary missing"; exit 1; }
-          du -sh dist/Echelon/ && echo "Linux build: OK"
+          du -sh dist/Echelon/ && echo "Linux PyInstaller build: OK"
 
       - name: Build AppImage
-        run: chmod +x scripts/build_appimage.sh && bash scripts/build_appimage.sh
+        run: |
+          chmod +x scripts/build_appimage.sh
+          bash scripts/build_appimage.sh
+
+      - name: Verify AppImage
+        run: |
+          [ -f "Echelon-x86_64.AppImage" ] || { echo "ERROR: AppImage missing"; exit 1; }
+          echo "AppImage: $(du -sh Echelon-x86_64.AppImage | cut -f1) - OK"
 
       - name: Build .deb package
-        run: chmod +x scripts/build_deb.sh && bash scripts/build_deb.sh
+        run: |
+          chmod +x scripts/build_deb.sh
+          ECHELON_VERSION=${{ env.VERSION }} bash scripts/build_deb.sh
 
-      - name: Verify outputs
-        run: ls -lh Echelon-x86_64.AppImage echelon_2.3.0_amd64.deb && echo "All outputs OK"
+      - name: Verify .deb package
+        run: |
+          [ -f "echelon_${{ env.VERSION }}_amd64.deb" ] || { echo "ERROR: .deb missing"; ls -la *.deb 2>/dev/null || echo "No .deb found"; exit 1; }
+          echo "Deb: $(du -sh echelon_${{ env.VERSION }}_amd64.deb | cut -f1) - OK"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4.6.2
@@ -193,15 +224,17 @@ jobs:
           name: Echelon-Linux
           path: |
             Echelon-x86_64.AppImage
-            echelon_2.3.0_amd64.deb
+            echelon_${{ env.VERSION }}_amd64.deb
           retention-days: 90
 
+
   # ═══════════════════════════════════════════
-  # macOS - Universal Binary (Intel + Apple Silicon)
-  # Single job - builds on arm64 (Apple Silicon), works on all modern Macs
-  # Note: Universal Binary (Intel+arm64) requires 2 concurrent macOS runners
-  # which hits GitHub free tier limits. Single arm64 build works on M1/M2/M3/M4.
-  # Intel Mac users can run via Rosetta 2 (automatic, transparent).
+  # macOS — Universal Binary (Apple Silicon + Intel via Rosetta 2)
+  # Supports macOS 10.15 Catalina and later
+  # Note: A true fat binary (native on both) requires two concurrent macOS
+  # runners which hits the free-tier limit. The single arm64 build runs
+  # natively on M1/M2/M3/M4 and transparently via Rosetta 2 on Intel Macs.
+  # ═══════════════════════════════════════════
   build-macos:
     runs-on: macos-latest
     steps:
@@ -246,7 +279,7 @@ jobs:
             --osx-bundle-identifier=com.zero.echelon \
             --noconfirm main.py
 
-      - name: Verify build
+      - name: Verify macOS build
         run: |
           [ -d "dist/Echelon.app" ] || { echo "ERROR: Echelon.app not found"; ls dist/; exit 1; }
           file dist/Echelon.app/Contents/MacOS/Echelon
@@ -261,12 +294,13 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$PLIST" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 10.15" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.zero.echelon" "$PLIST" 2>/dev/null || true
-            plutil -lint "$PLIST" && echo "Info.plist: valid" || echo "Info.plist: warning"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ github.ref_name }}" "$PLIST" 2>/dev/null || true
+            plutil -lint "$PLIST" && echo "Info.plist: valid" || echo "Info.plist: warning (non-fatal)"
           fi
           chmod +x "$APP/Contents/MacOS/Echelon"
           xattr -cr "$APP" 2>/dev/null || true
 
-      - name: Package as .dmg
+      - name: Package as DMG
         run: |
           mkdir -p dmg_staging
           cp -r dist/Echelon.app dmg_staging/Echelon.app
@@ -277,26 +311,34 @@ jobs:
             -ov -format UDZO \
             -imagekey zlib-level=9 \
             Echelon-macOS.dmg
-          echo "DMG: $(ls -lh Echelon-macOS.dmg)"
+          [ -f "Echelon-macOS.dmg" ] || { echo "ERROR: DMG not created"; exit 1; }
+          echo "DMG: $(du -sh Echelon-macOS.dmg | cut -f1) - OK"
 
-      - name: Upload macOS .dmg
+      - name: Upload macOS DMG
         uses: actions/upload-artifact@v4.6.2
         with:
           name: Echelon-macOS
           path: Echelon-macOS.dmg
           retention-days: 90
 
+
   # ═══════════════════════════════════════════
-  # RELEASE - publish to GitHub Releases
+  # RELEASE — publish to GitHub Releases
+  # Runs even if one platform build fails (always())
+  # so a partial release is still published
   # ═══════════════════════════════════════════
   create-release:
     needs: [build-windows, build-linux, build-macos]
-    # build-macos is now a single arm64 job (works on M1/M2/M3/M4, Intel via Rosetta 2)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') && always()
     permissions:
       contents: write
     steps:
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4.3.0
         continue-on-error: true
@@ -324,7 +366,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2.2.1
         with:
-          name: "Echelon ${{ github.ref_name }} - by Zero"
+          name: "Echelon ${{ github.ref_name }} — by Zero"
           body: |
             ## ⚡ Echelon ${{ github.ref_name }}
             **Real-time face swap for video calls. Created by Zero.**
@@ -335,48 +377,72 @@ jobs:
 
             | Platform | File | Notes |
             |---|---|---|
-            | 🪟 **Windows** | `Echelon-Setup.exe` | Double-click → Next → Finish |
-            | 🍎 **macOS** | `Echelon-macOS.dmg` | Universal Binary - works on Intel & Apple Silicon |
-            | 🐧 **Linux (any)** | `Echelon-x86_64.AppImage` | `chmod +x` then double-click |
-            | 🐧 **Ubuntu/Debian** | `echelon_2.3.0_amd64.deb` | `sudo dpkg -i echelon_2.3.0_amd64.deb` |
+            | 🪟 **Windows 10 / 11** | `Echelon-Setup.exe` | Double-click → Next → Finish |
+            | 🍎 **macOS 10.15+** | `Echelon-macOS.dmg` | Apple Silicon native, Intel via Rosetta 2 |
+            | 🐧 **Linux (any distro)** | `Echelon-x86_64.AppImage` | `chmod +x` then double-click |
+            | 🐧 **Ubuntu / Debian** | `echelon_${{ env.VERSION }}_amd64.deb` | `sudo dpkg -i echelon_${{ env.VERSION }}_amd64.deb` |
 
             ---
 
-            ## 🍎 macOS - First Launch Fix
+            ## 🪟 Windows — SmartScreen warning
 
-            macOS blocks unsigned apps by default. **Two options:**
+            Windows may show "Unknown publisher" on first run. Click **More info → Run anyway**.
+            This is normal for apps without a code-signing certificate.
 
-            **Option A - Easy (one time):**
+            ---
+
+            ## 🍎 macOS — First Launch Fix
+
+            macOS Gatekeeper blocks unsigned apps. **One-time fix:**
+
             ```bash
             xattr -rd com.apple.quarantine /Applications/Echelon.app
             ```
 
-            **Option B - Right-click method:**
-            Right-click `Echelon.app` → **Open** → click **Open** in the dialog. Done.
-
-            > This is normal for free apps without Apple Developer notarization ($99/year). Safe to use.
+            Or: right-click `Echelon.app` → **Open** → **Open**. Done.
 
             ---
 
-            ## 🎥 Virtual Camera (for video calls)
+            ## 🎥 Virtual Camera Setup (required for video calls)
 
-            | Platform | What to do |
+            | Platform | Instructions |
             |---|---|
-            | 🪟 Windows | Install [OBS Studio](https://obsproject.com/) → enable Virtual Camera |
-            | 🍎 macOS | Install [OBS Studio](https://obsproject.com/) → enable Virtual Camera |
-            | 🐧 Linux | `sudo apt install v4l2loopback-dkms` (Echelon loads it automatically) |
+            | 🪟 Windows | Install [OBS Studio](https://obsproject.com/) → Start OBS → click **Start Virtual Camera** |
+            | 🍎 macOS | Install [OBS Studio](https://obsproject.com/) → Start OBS → click **Start Virtual Camera** |
+            | 🐧 Linux | Echelon loads v4l2loopback automatically. If needed: `sudo apt install v4l2loopback-dkms` |
+
+            Then in Zoom / Meet / Discord → select **"Echelon Camera"** as your camera.
 
             ---
 
-            ## ⚙️ Requirements
-            - 8 GB RAM · Webcam · macOS 10.15+ / Windows 10+ / Ubuntu 20.04+
-            - AI models (~600 MB) download automatically on first launch
+            ## 🤖 AI Models (first launch only)
+
+            On first launch, Echelon downloads two models (~600 MB, one-time):
+
+            | Model | Size | Purpose |
+            |---|---|---|
+            | `inswapper_128.onnx` | ~554 MB | Face swap engine |
+            | `buffalo_l` | ~46 MB | Face detection |
+
+            Downloads automatically via the setup wizard.
+
+            ---
+
+            ## ⚙️ System Requirements
+
+            | | Minimum | Recommended |
+            |---|---|---|
+            | RAM | 8 GB | 16 GB |
+            | CPU | Intel i5 (8th gen+) / AMD Ryzen 5 | Intel i7 / Ryzen 7 |
+            | GPU | Not required | NVIDIA CUDA (major FPS boost) |
+            | OS | Windows 10+ / macOS 10.15+ / Ubuntu 20.04+ | Latest |
+            | Webcam | Required | 1080p HD |
 
           files: |
             release/Echelon-Setup.exe
             release/Echelon-macOS.dmg
             release/Echelon-x86_64.AppImage
-            release/echelon_2.3.0_amd64.deb
+            release/echelon_*_amd64.deb
           draft: false
           prerelease: false
           fail_on_unmatched_files: false

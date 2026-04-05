@@ -67,7 +67,7 @@ def _make_splash(app):
     font2 = QFont()
     font2.setPointSize(11)
     painter.setFont(font2)
-    painter.drawText(0, 245, 300, 30, Qt.AlignmentFlag.AlignCenter, "by Zero  ·  v2.3")
+    painter.drawText(0, 245, 300, 30, Qt.AlignmentFlag.AlignCenter, "by Zero  ·  v3.0")
 
     painter.setPen(QColor("#5C5FFF"))
     font3 = QFont()
@@ -90,7 +90,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Echelon")
-    app.setApplicationVersion("2.3.0")
+    app.setApplicationVersion("3.0.0")
     app.setOrganizationName("Echelon")
 
     # Show splash IMMEDIATELY so user sees the app opened
